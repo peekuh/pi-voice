@@ -51,9 +51,11 @@ Space taps insert immediately. Initial candidate spaces are rolled back once a s
 
 ### Audio-reactive recording cursor
 
-While recording, a colorful software cursor replaces the ordinary caret at the same insertion point. Its height follows the microphone's local PCM level: quiet input shows a short block and louder input grows toward a full-height block. A cached 30 Hz presentation smooths attack/release and adds height hysteresis. Ordinary key-repeat/editor redraws reuse that cached appearance instead of resampling the animation. Colors advance in 100 ms buckets, and animation requests a repaint only when the visible glyph or color changes.
+While recording, a colorful software cursor replaces the ordinary caret at the same insertion point. Its height follows the microphone's local PCM level: quiet input shows a short block and louder input grows toward a full-height block. Audio and color share a cached 16 Hz presentation clock, matching the roughly 60–65 ms cursor updates observed in a real Claude Code session. Ordinary key-repeat/editor redraws reuse that appearance instead of resampling it.
 
 The level meter allows 200 ms for normal buffered microphone delivery before treating missing data as a stale input. Actual silent PCM still lowers the level promptly; ordinary audio-chunk gaps no longer produce a drop/rebound effect.
+
+In Pi's default fullscreen mode, cursor-only animation updates the cursor cell rather than clearing and repainting the composer row. A scoped output adapter narrows only a recognized native frame whose surrounding row bytes are unchanged. Text edits, cursor movement, resizing, screen clears, unknown output formats, and regular-screen mode retain Pi's normal rendering path. No independent background terminal writes or installed-Pi patches are used.
 
 The cursor becomes steady and muted while the stream finalizes, then the previous cursor mode is restored. Cancellation, focus loss, and extension shutdown also restore it. The indicator is rendering only: it does not insert characters, shift the draft, start another recording, or make extra transcription requests.
 
@@ -170,9 +172,9 @@ For Deepgram, a transport observer requires one live WebSocket, continuous PCM, 
 
 The cursor checks capture actual editor-render output and native-cursor visibility. They require a quiet low-height indicator, a taller indicator during speech, changing recording colors when color is enabled, a steady finalizing indicator, and restoration after release/Escape. `--reduced-motion` verifies fixed height/color; `NO_COLOR` verifies the monochrome path. `--capture` saves public-fixture ANSI cursor frames for visual inspection without storing credentials or microphone recordings.
 
-The smoke also measures actual terminal cursor-row erases during a steady silent hold, with a generous upper bound to catch key-repeat-driven repaint regressions. The stabilization check observed 9 cursor-row clears in one second. `--capture` additionally writes timestamped native terminal-output JSONL for motion replay; this preserves the actual update timing instead of judging smoothness from still frames alone.
+`--capture` additionally writes timestamped native terminal-output JSONL for motion replay; this preserves actual update timing instead of judging smoothness from still frames alone.
 
-Verified on Linux with Pi 1.2.0 / Node 26.12.1: 200 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
+Verified on Linux with Pi 1.2.0 / Node 26.12.1: 214 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
 
 ## Layout
 
@@ -183,6 +185,7 @@ src/controller.ts    Recording/transcription ownership and cancellation
 src/audio-meter.ts   PCM loudness envelope without retaining audio
 src/cursor.ts        Audio-reactive software-cursor rendering
 src/cursor-animation.ts Cached smoothing, height hysteresis and presentation clock
+src/cursor-output.ts Narrow cursor-only native frames without row erasure
 src/recorder.ts      ffmpeg capture and WAV encoding
 src/providers.ts     Groq HTTPS transcription and shared credential resolution
 src/stream.ts        Provider dispatch and Groq phrase queue/rate spacing

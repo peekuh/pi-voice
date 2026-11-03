@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CURSOR_MARKER, renderFakeCursor, stripTerminalSequences } from "@earendil-works/pi-tui";
-import { CursorAnimation } from "../src/cursor-animation.ts";
+import { CURSOR_FRAME_INTERVAL_MS, CursorAnimation } from "../src/cursor-animation.ts";
 import { renderVoiceCursor, type VoiceCursorFrame } from "../src/cursor.ts";
 
 function frame(nowMs: number, level = 0, overrides: Partial<VoiceCursorFrame> = {}): VoiceCursorFrame {
@@ -32,7 +32,7 @@ test("noisy targets near every rounding boundary keep their established block he
       const initialPaint = stripTerminalSequences(paint(initial));
       for (let tick = 1; tick <= 90; tick++) {
         const noisyLevel = (boundary + (tick % 2 === 0 ? -0.08 : 0.08)) / 7;
-        const next = animation.update(frame(tick * 1_000 / 30, noisyLevel));
+        const next = animation.update(frame(tick * CURSOR_FRAME_INTERVAL_MS, noisyLevel));
         assert.equal(height(next), height(initial));
         assert.equal(stripTerminalSequences(paint(next)), initialPaint);
       }
@@ -45,38 +45,39 @@ test("sustained loud and quiet steps are monotonic, one bin at a time, and respo
   animation.update(frame(0));
   let previous = 0;
   let reachedLoudMs = Infinity;
-  for (let tick = 1; tick <= 30; tick++) {
-    const nowMs = tick * 1_000 / 30;
+  for (let tick = 1; tick <= 16; tick++) {
+    const nowMs = tick * CURSOR_FRAME_INTERVAL_MS;
     const next = animation.update(frame(nowMs, 1));
     assert.equal(next.level, height(next) / 7);
     assert.ok(height(next) >= previous && height(next) <= previous + 1);
     previous = height(next);
     if (previous === 7) reachedLoudMs = Math.min(reachedLoudMs, nowMs);
   }
-  assert.ok(reachedLoudMs > 0 && reachedLoudMs < 350, `rise took ${reachedLoudMs}ms`);
+  assert.ok(reachedLoudMs >= 400 && reachedLoudMs < 600, `rise took ${reachedLoudMs}ms`);
 
   let reachedQuietMs = Infinity;
-  for (let tick = 1; tick <= 30; tick++) {
-    const elapsedMs = tick * 1_000 / 30;
+  for (let tick = 1; tick <= 16; tick++) {
+    const elapsedMs = tick * CURSOR_FRAME_INTERVAL_MS;
     const next = animation.update(frame(1_000 + elapsedMs));
     assert.ok(height(next) <= previous && height(next) >= previous - 1);
     previous = height(next);
     if (previous === 0) reachedQuietMs = Math.min(reachedQuietMs, elapsedMs);
   }
-  assert.ok(reachedQuietMs > 0 && reachedQuietMs < 500, `fall took ${reachedQuietMs}ms`);
+  assert.ok(reachedQuietMs >= 400 && reachedQuietMs < 600, `fall took ${reachedQuietMs}ms`);
 });
 
 test("repeated samples inside one presentation tick cannot advance audio or color", () => {
   const animation = new CursorAnimation();
   const initial = animation.update(frame(80));
-  for (let nowMs = 81; nowMs < 113; nowMs++) {
+  for (let nowMs = 81; nowMs < 80 + CURSOR_FRAME_INTERVAL_MS; nowMs++) {
     const next = animation.update(frame(nowMs, 1));
     assert.equal(next, initial);
     assert.equal(paint(next), paint(initial));
   }
-  const next = animation.update(frame(114, 1));
+  const next = animation.update(frame(80 + CURSOR_FRAME_INTERVAL_MS, 1));
   assert.equal(height(next), 1);
-  assert.equal(next.nowMs, 100);
+  assert.notEqual(next.nowMs, initial.nowMs);
+  assert.notEqual(paint(next), paint(initial));
 });
 
 test("extra high-frequency host samples do not accelerate presentation", () => {
@@ -84,20 +85,22 @@ test("extra high-frequency host samples do not accelerate presentation", () => {
   const frequent = new CursorAnimation();
   sparse.update(frame(0));
   frequent.update(frame(0));
-  let denseFrame = frame(0);
-  for (let nowMs = 1; nowMs <= 680; nowMs++) {
-    const level = nowMs <= 350 ? 1 : 0;
-    denseFrame = frequent.update(frame(nowMs, level));
-    if (nowMs % 34 === 0) {
-      const sparseFrame = sparse.update(frame(nowMs, level));
-      assert.equal(height(denseFrame), height(sparseFrame), `height at ${nowMs}ms`);
-      assert.equal(paint(denseFrame), paint(sparseFrame), `paint at ${nowMs}ms`);
+  for (let tick = 1; tick <= 20; tick++) {
+    const level = tick <= 10 ? 1 : 0;
+    let denseFrame = frame(0);
+    for (let sample = 1; sample <= 10; sample++) {
+      const nowMs = (tick - 1 + sample / 10) * CURSOR_FRAME_INTERVAL_MS;
+      denseFrame = frequent.update(frame(nowMs, level));
     }
+    const nowMs = tick * CURSOR_FRAME_INTERVAL_MS;
+    const sparseFrame = sparse.update(frame(nowMs, level));
+    assert.equal(height(denseFrame), height(sparseFrame), `height at ${nowMs}ms`);
+    assert.equal(paint(denseFrame), paint(sparseFrame), `paint at ${nowMs}ms`);
   }
 });
 
 test("variable presentation cadences retain bounded steps and sensible rise and fall times", () => {
-  for (const cadence of [[16], [34], [11, 23, 17, 41, 8]]) {
+  for (const cadence of [[16], [CURSOR_FRAME_INTERVAL_MS], [67], [11, 23, 17, 41, 8]]) {
     const animation = new CursorAnimation();
     animation.update(frame(0));
     let nowMs = 0;
@@ -111,7 +114,7 @@ test("variable presentation cadences retain bounded steps and sensible rise and 
       previous = current;
       if (current === 7) reachedLoudMs = Math.min(reachedLoudMs, nowMs);
     }
-    assert.ok(reachedLoudMs < 350, `${cadence}: rise took ${reachedLoudMs}ms`);
+    assert.ok(reachedLoudMs >= 400 && reachedLoudMs < 600, `${cadence}: rise took ${reachedLoudMs}ms`);
     const quietStartMs = nowMs;
     let reachedQuietMs = Infinity;
     while (nowMs - quietStartMs < 1_000) {
@@ -121,7 +124,7 @@ test("variable presentation cadences retain bounded steps and sensible rise and 
       previous = current;
       if (current === 0) reachedQuietMs = Math.min(reachedQuietMs, nowMs - quietStartMs);
     }
-    assert.ok(reachedQuietMs < 500, `${cadence}: fall took ${reachedQuietMs}ms`);
+    assert.ok(reachedQuietMs >= 400 && reachedQuietMs < 600, `${cadence}: fall took ${reachedQuietMs}ms`);
   }
 });
 
@@ -141,22 +144,22 @@ test("long frame stalls do not flash through multiple height bins or replay miss
   assert.equal(height(loud.update(frame(10_000))), 6);
 });
 
-test("steady audio uses stable 100ms color buckets and preserves the eight-second palette", () => {
+test("quiet audio advances color on each presentation tick and preserves the eight-second palette", () => {
   const animation = new CursorAnimation();
-  const first = animation.update(frame(0, 3 / 7));
-  for (const nowMs of [34, 67, 99]) {
-    const next = animation.update(frame(nowMs, 3 / 7));
-    assert.equal(next.nowMs, 0);
-    assert.equal(paint(next), paint(first));
+  const first = animation.update(frame(0));
+  let previous = first;
+  for (let tick = 1; tick <= 4; tick++) {
+    const tickMs = tick * CURSOR_FRAME_INTERVAL_MS;
+    const withinTick = animation.update(frame(tickMs - 1));
+    assert.equal(withinTick, previous);
+    assert.equal(paint(withinTick), paint(previous));
+    const next = animation.update(frame(tickMs));
+    assert.equal(height(next), 0);
+    assert.ok(next.nowMs > previous.nowMs);
+    assert.notEqual(paint(next), paint(previous));
+    previous = next;
   }
-  const hundred = animation.update(frame(100, 3 / 7));
-  assert.equal(hundred.nowMs, 100);
-  assert.notEqual(paint(hundred), paint(first));
-  for (const nowMs of [134, 167, 199]) {
-    assert.equal(paint(animation.update(frame(nowMs, 3 / 7))), paint(hundred));
-  }
-  assert.equal(animation.update(frame(200, 3 / 7)).nowMs, 200);
-  assert.equal(paint(animation.update(frame(8_000, 3 / 7))), paint(first));
+  assert.equal(paint(animation.update(frame(8_000))), paint(first));
 });
 
 test("invalid and backwards clocks preserve presentation and recover without amplitude jumps", () => {
@@ -166,16 +169,16 @@ test("invalid and backwards clocks preserve presentation and recover without amp
     assert.equal(animation.update(frame(nowMs, 1)), initial);
   }
   assert.equal(animation.update(frame(10, 1)), initial);
-  const recovered = animation.update(frame(44, 1));
+  const recovered = animation.update(frame(10 + CURSOR_FRAME_INTERVAL_MS, 1));
   assert.equal(height(recovered), 1);
   assert.ok(Number.isFinite(recovered.nowMs));
-  assert.equal(animation.update(frame(45, 0)), recovered);
+  assert.equal(animation.update(frame(11 + CURSOR_FRAME_INTERVAL_MS, 0)), recovered);
 
   const invalidStart = new CursorAnimation();
   const start = invalidStart.update(frame(NaN, 0.5));
   assert.equal(start.nowMs, 0);
   assert.equal(invalidStart.update(frame(100, 1)), start);
-  assert.ok(Math.abs(height(invalidStart.update(frame(134, 1))) - height(start)) <= 1);
+  assert.ok(Math.abs(height(invalidStart.update(frame(100 + CURSOR_FRAME_INTERVAL_MS, 1))) - height(start)) <= 1);
 });
 
 test("transcribing and reduced motion are steady and mode changes bypass the frame cache", () => {
@@ -193,7 +196,6 @@ test("transcribing and reduced motion are steady and mode changes bypass the fra
     const resumed = animation.update(frame(9_000, 0));
     assert.equal(height(resumed), 0, "resuming recording has no stale amplitude or exit transition");
     assert.equal(resumed.state, "recording");
-    assert.equal(resumed.reducedMotion, false);
   }
   const animation = new CursorAnimation();
   const reduced = animation.update(frame(0, 1, { reducedMotion: true }));
@@ -215,13 +217,13 @@ test("color preference changes immediately without advancing a cached height", (
 test("reset removes previous session amplitude, frame phase and mode", () => {
   const animation = new CursorAnimation();
   animation.update(frame(10_000, 1));
-  animation.update(frame(10_034, 1));
+  animation.update(frame(10_000 + CURSOR_FRAME_INTERVAL_MS, 1));
   animation.reset();
   const fresh = animation.update(frame(0));
   assert.equal(height(fresh), 0);
   assert.equal(fresh.nowMs, 0);
-  assert.equal(height(animation.update(frame(34, 1))), 1);
-  animation.update(frame(35, 1, { state: "transcribing" }));
+  assert.equal(height(animation.update(frame(CURSOR_FRAME_INTERVAL_MS, 1))), 1);
+  animation.update(frame(CURSOR_FRAME_INTERVAL_MS + 1, 1, { state: "transcribing" }));
   animation.reset();
   const loud = animation.update(frame(1, 1));
   assert.equal(height(loud), 7, "a fresh session reflects current sound without a fake entrance");

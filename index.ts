@@ -11,7 +11,8 @@ import { startRecording } from "./src/recorder.ts";
 import { startTranscriptionStream } from "./src/stream.ts";
 import { TranscriptDraft } from "./src/transcript.ts";
 import { renderVoiceCursor, type VoiceCursorFrame } from "./src/cursor.ts";
-import { CursorAnimation } from "./src/cursor-animation.ts";
+import { CURSOR_FRAME_INTERVAL_MS, CursorAnimation } from "./src/cursor-animation.ts";
+import { CursorCellOutput } from "./src/cursor-output.ts";
 import type { VoiceConfig } from "./src/types.ts";
 
 const cursorProbe = [CURSOR_MARKER + renderFakeCursor(" ")];
@@ -31,6 +32,7 @@ export default function voice(pi: ExtensionAPI): void {
   let cursorFrame: VoiceCursorFrame | undefined;
   let cursorPaint: string | undefined;
   const cursorAnimation = new CursorAnimation();
+  let detachCursorOutput: (() => void) | undefined;
   const controller = new Dictation({
     focused: () => enabled && !!editor?.focused,
     update: update => {
@@ -57,6 +59,8 @@ export default function voice(pi: ExtensionAPI): void {
     cursorFrame = undefined;
     cursorPaint = undefined;
     cursorAnimation.reset();
+    detachCursorOutput?.();
+    detachCursorOutput = undefined;
     if (!cursorLease) return;
     const { surface, hardware } = cursorLease;
     cursorLease = undefined;
@@ -90,6 +94,26 @@ export default function voice(pi: ExtensionAPI): void {
     if (!cursorLease) {
       cursorLease = { surface: cursorSurface, hardware: cursorSurface.getShowHardwareCursor() };
       cursorSurface.setShowHardwareCursor(false);
+      if (cursorSurface.mode === "fullscreen") {
+        const terminal = cursorSurface.terminal;
+        const previousWrite = terminal.write;
+        const output = new CursorCellOutput();
+        let active = true;
+        const write = (data: string): void => {
+          const eligible = active && !!editor?.focused && !!cursorPaint && controller.state !== "idle";
+          previousWrite.call(terminal, output.rewrite(data, eligible ? {
+            paint: cursorPaint!.slice(CURSOR_MARKER.length),
+            columns: terminal.columns,
+            rows: terminal.rows,
+          } : undefined));
+        };
+        terminal.write = write;
+        detachCursorOutput = () => {
+          active = false;
+          output.reset();
+          if (terminal.write === write) terminal.write = previousWrite;
+        };
+      }
     }
     if (state === "recording" && !config.cursor.reducedMotion) {
       if (!cursorTimer) {
@@ -99,7 +123,7 @@ export default function voice(pi: ExtensionAPI): void {
             return;
           }
           sampleVoiceCursor();
-        }, 1000 / 30);
+        }, CURSOR_FRAME_INTERVAL_MS);
         cursorTimer.unref();
       }
     } else {
