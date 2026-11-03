@@ -4,6 +4,7 @@ const FLOOR_DB = -60;
 const LOUD_DB = -12;
 const ATTACK_WEIGHT = 1 - Math.exp(-20 / 8);
 const PEAK_HOLD_MS = 40;
+const TRANSPORT_GRACE_MS = 200;
 const RELEASE_MS = 140;
 
 export class AudioMeter {
@@ -20,8 +21,9 @@ export class AudioMeter {
     let offset = 0;
     if (pcm.byteLength === 0) return;
     if (this.lastInputMs !== undefined) {
-      // Audio frames already account for their own duration; only decay gaps between them.
-      this.release(Math.max(0, now - this.lastInputMs - pcm.byteLength * 1_000 / (SAMPLE_RATE * 2)), 0);
+      // Batching/jitter is not silence; PCM windows still drive the audio envelope.
+      const durationMs = pcm.byteLength * 1_000 / (SAMPLE_RATE * 2);
+      this.release(Math.max(0, now - this.lastInputMs - Math.max(TRANSPORT_GRACE_MS, durationMs)), 0);
     }
     this.lastInputMs = now;
     if (this.lowByte >= 0) {
@@ -48,7 +50,7 @@ export class AudioMeter {
   sample(nowMs = performance.now()): number {
     const now = this.time(nowMs);
     if (this.lastInputMs === undefined) return 0;
-    const releaseMs = Math.max(0, now - this.lastInputMs - this.holdMs);
+    const releaseMs = Math.max(0, now - this.lastInputMs - TRANSPORT_GRACE_MS - this.holdMs);
     return Math.max(0, Math.min(1, this.level - releaseMs / RELEASE_MS));
   }
 

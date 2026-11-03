@@ -1,5 +1,5 @@
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, isKittyProtocolActive, matchesKey, parseKey, type TUI } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, isKeyRelease, isKittyProtocolActive, matchesKey, parseKey, renderFakeCursor, type TUI } from "@earendil-works/pi-tui";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
@@ -10,8 +10,11 @@ import { SpaceHold } from "./src/hold.ts";
 import { startRecording } from "./src/recorder.ts";
 import { startTranscriptionStream } from "./src/stream.ts";
 import { TranscriptDraft } from "./src/transcript.ts";
-import { renderVoiceCursor } from "./src/cursor.ts";
+import { renderVoiceCursor, type VoiceCursorFrame } from "./src/cursor.ts";
+import { CursorAnimation } from "./src/cursor-animation.ts";
 import type { VoiceConfig } from "./src/types.ts";
+
+const cursorProbe = [CURSOR_MARKER + renderFakeCursor(" ")];
 
 export default function voice(pi: ExtensionAPI): void {
   let config: VoiceConfig;
@@ -25,6 +28,9 @@ export default function voice(pi: ExtensionAPI): void {
   let cursorSurface: TUI | undefined;
   let cursorLease: { surface: TUI; hardware: boolean } | undefined;
   let cursorTimer: NodeJS.Timeout | undefined;
+  let cursorFrame: VoiceCursorFrame | undefined;
+  let cursorPaint: string | undefined;
+  const cursorAnimation = new CursorAnimation();
   const controller = new Dictation({
     focused: () => enabled && !!editor?.focused,
     update: update => {
@@ -48,11 +54,31 @@ export default function voice(pi: ExtensionAPI): void {
   function restoreVoiceCursor(): void {
     clearInterval(cursorTimer);
     cursorTimer = undefined;
+    cursorFrame = undefined;
+    cursorPaint = undefined;
+    cursorAnimation.reset();
     if (!cursorLease) return;
     const { surface, hardware } = cursorLease;
     cursorLease = undefined;
     surface.setShowHardwareCursor(hardware);
     surface.requestRender();
+  }
+
+  function sampleVoiceCursor(): void {
+    const state = controller.state;
+    if (!cursorSurface || !config.cursor.enabled || !editor?.focused || state === "idle") return;
+    const frame = cursorAnimation.update({
+      state,
+      level: controller.audioLevel,
+      nowMs: performance.now(),
+      reducedMotion: config.cursor.reducedMotion,
+      color: !process.env.NO_COLOR,
+    });
+    const paint = renderVoiceCursor(cursorProbe, frame)[0];
+    cursorFrame = frame;
+    if (paint === cursorPaint) return;
+    cursorPaint = paint;
+    cursorSurface.requestRender();
   }
 
   function syncVoiceCursor(): void {
@@ -72,15 +98,15 @@ export default function voice(pi: ExtensionAPI): void {
             syncVoiceCursor();
             return;
           }
-          cursorSurface?.requestRender();
-        }, 1000 / 24);
+          sampleVoiceCursor();
+        }, 1000 / 30);
         cursorTimer.unref();
       }
     } else {
       clearInterval(cursorTimer);
       cursorTimer = undefined;
     }
-    cursorSurface.requestRender();
+    sampleVoiceCursor();
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -107,14 +133,8 @@ export default function voice(pi: ExtensionAPI): void {
           override render(width: number): string[] {
             const lines = super.render(width);
             const state = controller.state;
-            if (!config.cursor.enabled || !this.focused || state === "idle") return lines;
-            return renderVoiceCursor(lines, {
-              state,
-              level: controller.audioLevel,
-              nowMs: performance.now(),
-              reducedMotion: config.cursor.reducedMotion,
-              color: !process.env.NO_COLOR,
-            });
+            if (!config.cursor.enabled || !this.focused || state === "idle" || !cursorFrame) return lines;
+            return renderVoiceCursor(lines, cursorFrame);
           }
 
           insertOwnedSpaces(count: number): void {

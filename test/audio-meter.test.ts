@@ -31,6 +31,24 @@ function splitPush(meter: AudioMeter, audio: Uint8Array, sizes: readonly number[
   }
 }
 
+function assertSteadyDelivery(deliveries: readonly { atMs: number; durationMs: number }[], fps: number): void {
+  const meter = new AudioMeter();
+  let nextDelivery = 0;
+  let previous = 0;
+  const endMs = deliveries[deliveries.length - 1]!.atMs;
+  for (let frame = 0; frame * 1_000 / fps <= endMs; frame++) {
+    const now = frame * 1_000 / fps;
+    while (nextDelivery < deliveries.length && deliveries[nextDelivery]!.atMs <= now) {
+      const delivery = deliveries[nextDelivery++]!;
+      meter.push(pcm(delivery.durationMs, 16_000), delivery.atMs);
+    }
+    const current = meter.sample(now);
+    assert.ok(current > 0.99, `sustained sound dipped to ${current} at ${now}ms (${fps}Hz)`);
+    assert.ok(current + 1e-12 >= previous, `delivery caused a drop from ${previous} to ${current} at ${now}ms`);
+    previous = current;
+  }
+}
+
 test("silence and sub-floor input stay quiet, with quiet speech below loud speech", () => {
   assert.equal(level(0), 0);
   assert.equal(level(32), 0);
@@ -70,16 +88,34 @@ test("attack reacts to a completed 20ms RMS window rather than byte chunk size",
   assert.ok(meter.sample(0) > 0.9);
 });
 
-test("one loud sample remains visible through the next display frame", () => {
+test("one loud sample remains visible through the next 30Hz display frame", () => {
   const meter = new AudioMeter();
   const click = pcm(20);
   click.writeInt16LE(32_767, 0);
   meter.push(click, 0);
   const peak = meter.sample(0);
   assert.ok(peak > 0.6);
-  close(meter.sample(40), peak);
-  assert.ok(meter.sample(80) < peak);
-  assert.equal(meter.sample(200), 0);
+  close(meter.sample(1_000 / 30), peak);
+});
+
+test("sustained PCM batches at 64, 128, and 160ms have no dips at 30 or 60Hz", () => {
+  for (const durationMs of [64, 128, 160]) {
+    const deliveries = Array.from({ length: 24 }, (_, index) => ({ atMs: index * durationMs, durationMs }));
+    for (const fps of [30, 60]) assertSteadyDelivery(deliveries, fps);
+  }
+});
+
+test("mixed PCM batch sizes and irregular delivery jitter do not pulse steady sound", () => {
+  let audioTimeMs = 0;
+  const deliveries = [{ atMs: 0, durationMs: 128 }];
+  const durations = [64, 160, 128, 64, 128, 160, 64, 160];
+  const delays = [24, 7, 46, 2, 39, 11, 53, 4];
+  for (let index = 0; index < 48; index++) {
+    const durationMs = durations[index % durations.length]!;
+    audioTimeMs += durationMs;
+    deliveries.push({ atMs: audioTimeMs + delays[index % delays.length]!, durationMs });
+  }
+  for (const fps of [30, 60]) assertSteadyDelivery(deliveries, fps);
 });
 
 test("new silence releases gently after the peak hold and reaches quiet within 200ms", () => {
@@ -97,19 +133,45 @@ test("new silence releases gently after the peak hold and reaches quiet within 2
   assert.equal(meter.sample(220), 0);
 });
 
-test("stale input decays without PCM and sampling does not accelerate the envelope", () => {
-  const sampled = new AudioMeter();
-  const untouched = new AudioMeter();
-  sampled.push(pcm(40, 16_000), 0);
-  untouched.push(pcm(40, 16_000), 0);
-  const peak = sampled.sample(0);
-  close(sampled.sample(40), peak);
-  const falling = sampled.sample(80);
-  assert.ok(falling > 0 && falling < peak);
-  close(sampled.sample(80), untouched.sample(80));
-  close(sampled.sample(120), untouched.sample(120));
-  assert.equal(sampled.sample(180), 0);
-  assert.equal(sampled.sample(10_000), 0);
+test("continuously arriving silent PCM releases the envelope independently of transport grace", () => {
+  for (const durationMs of [20, 64, 128, 160]) {
+    const meter = new AudioMeter();
+    meter.push(pcm(40, 16_000), 0);
+    let previous = meter.sample(0);
+    let now = 0;
+    while (now < 200) {
+      now += durationMs;
+      meter.push(pcm(durationMs), now);
+      const current = meter.sample(now);
+      assert.ok(current <= previous, `silence rebounded at ${now}ms with ${durationMs}ms batches`);
+      if (now >= 80) assert.ok(current < 0.9, `silent PCM did not release at ${now}ms`);
+      if (now >= 180) assert.equal(current, 0);
+      previous = current;
+    }
+  }
+});
+
+test("stalled input settles within 400ms and display frequency cannot accelerate decay", () => {
+  const frequent = new AudioMeter();
+  const sparse = new AudioMeter();
+  frequent.push(pcm(40, 16_000), 0);
+  sparse.push(pcm(40, 16_000), 0);
+  const peak = frequent.sample(0);
+  let previous = peak;
+  let sawRelease = false;
+  for (let frame = 1; frame <= 24; frame++) {
+    const now = frame * 1_000 / 60;
+    const current = frequent.sample(now);
+    assert.ok(current <= previous);
+    if (now <= 200) close(current, peak);
+    if (current > 0 && current < peak) sawRelease = true;
+    if (frame % 6 === 0) close(current, sparse.sample(now));
+    previous = current;
+  }
+  assert.ok(sawRelease);
+  assert.equal(frequent.sample(400), 0);
+  assert.equal(sparse.sample(400), 0);
+  assert.equal(frequent.sample(10_000), 0);
 });
 
 test("empty pushes do not keep stale audio alive", () => {
@@ -117,7 +179,8 @@ test("empty pushes do not keep stale audio alive", () => {
   meter.push(pcm(20, 16_000), 0);
   meter.push(new Uint8Array(), 100);
   meter.push(new Uint8Array(), 200);
-  assert.equal(meter.sample(200), 0);
+  meter.push(new Uint8Array(), 300);
+  assert.equal(meter.sample(400), 0);
 });
 
 test("input after a long gap does not revive the old peak", () => {
@@ -134,12 +197,12 @@ test("arbitrary byte boundaries and single-byte chunks preserve all signed PCM s
   const whole = new AudioMeter();
   whole.push(audio, 0);
   const atInput = whole.sample(0);
-  const afterDecay = whole.sample(80);
+  const afterDecay = whole.sample(280);
   for (const sizes of [[1], [1, 7, 639, 2, 641, 17], [audio.byteLength - 1, 1]]) {
     const split = new AudioMeter();
     splitPush(split, audio, sizes);
     close(split.sample(0), atInput);
-    close(split.sample(80), afterDecay);
+    close(split.sample(280), afterDecay);
   }
 });
 
@@ -149,12 +212,12 @@ test("levels are independent of chunk size when chunks arrive at PCM playback sp
   const whole = new AudioMeter();
   whole.push(audio, now);
   const atInput = whole.sample(now);
-  const afterDecay = whole.sample(now + 80);
+  const afterDecay = whole.sample(now + 280);
   for (const sizes of [[1], [32], [640], [1, 7, 639, 2, 641, 17]]) {
     const split = new AudioMeter();
     splitPush(split, audio, sizes, true);
     close(split.sample(now), atInput);
-    close(split.sample(now + 80), afterDecay);
+    close(split.sample(now + 280), afterDecay);
   }
 });
 
@@ -183,7 +246,7 @@ test("zero, invalid, and backwards times keep levels finite, bounded, and monoto
   for (const now of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1]) {
     close(meter.sample(now), peak);
   }
-  const falling = meter.sample(100);
+  const falling = meter.sample(280);
   assert.ok(falling >= 0 && falling < peak);
   close(meter.sample(0), falling);
   meter.push(pcm(20, 200), Number.NaN);
