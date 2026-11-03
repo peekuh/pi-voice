@@ -49,6 +49,14 @@ Space taps insert immediately. Initial candidate spaces are rolled back once a s
 
 **Ctrl+Shift+R** toggles recording without a hold. **Escape** or **Ctrl+C** cancels capture and pending responses, removing only the owned interim hypothesis; finalized text remains. Focus loss, session replacement, and extension shutdown also cancel pending work. Another editing key clears the provisional preview before performing its normal action. Submitting the draft cancels pending transcription so it cannot appear in the next prompt. User edits are never replaced wholesale.
 
+### Audio-reactive recording cursor
+
+While recording, a colorful software cursor replaces the ordinary caret at the same insertion point. Its height follows the microphone's local PCM level: quiet input shows a short block and louder input grows toward a full-height block. A fast attack and short release keep it responsive without jitter. The color cycles smoothly while listening, with redraws capped at 24 frames per second.
+
+The cursor becomes steady and muted while the stream finalizes, then the previous cursor mode is restored. Cancellation, focus loss, and extension shutdown also restore it. The indicator is rendering only: it does not insert characters, shift the draft, start another recording, or make extra transcription requests.
+
+Terminal cells provide eight height steps rather than arbitrary pixel scaling. Set `cursor.reducedMotion` to `true` for a fixed recording indicator, or `cursor.enabled` to `false` to keep the ordinary caret. A nonempty `NO_COLOR` environment variable disables the rainbow but retains sound-responsive height.
+
 ## Commands
 
 ```text
@@ -114,6 +122,10 @@ All defaults (only override what you need):
   "capture": {
     "ffmpegPath": "ffmpeg",
     "device": "default"
+  },
+  "cursor": {
+    "enabled": true,
+    "reducedMotion": false
   }
 }
 ```
@@ -124,9 +136,9 @@ All defaults (only override what you need):
 
 ## Privacy and permissions
 
-- Audio is PCM WAV, mono, 16 kHz, held in process memory; normal dictation writes no audio files.
+- Audio is mono 16 kHz PCM in process memory; Groq phrases are wrapped as WAV. Normal dictation writes no audio files.
 - Recording begins only after the hold threshold. There is no pre-recording buffer: wait for the recording indicator before speaking.
-- Audio leaves your machine only for the selected provider's HTTPS transcription endpoint. Provider retention, pricing, and account limits apply.
+- Audio leaves your machine only for the selected provider's encrypted HTTPS/WSS transcription connection. Provider retention, pricing, and account limits apply.
 - No keyboard-device access, global hotkey daemon, clipboard injection, root permission, or OS input-group changes.
 - API errors do not include response bodies or keys. The extension does not log audio or transcripts.
 - `capture.ffmpegPath` executes a local program with your privileges. Keep the configuration trusted.
@@ -152,7 +164,7 @@ It starts actual Pi PTYs with normal installed-extension discovery and records f
 
 For Deepgram, a transport observer requires one live WebSocket, continuous PCM, server `is_final:false` hypotheses rendered before the first speech pause, zero prerecorded HTTP uploads, and `CloseStream` followed by clean server finalization. Final editor text must match the committed server segments without duplicated interims. A second live utterance verifies that Escape removes the owned provisional text and blocks late results.
 
-Verified on Linux with Pi 1.2.0 / Node 26.12.1: 157 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
+Verified on Linux with Pi 1.2.0 / Node 26.12.1: 185 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
 
 ## Layout
 
@@ -160,6 +172,8 @@ Verified on Linux with Pi 1.2.0 / Node 26.12.1: 157 regression tests plus TypeSc
 index.ts             Pi editor and slash-command integration
 src/hold.ts          Space gesture and legacy repeat-gap detection
 src/controller.ts    Recording/transcription ownership and cancellation
+src/audio-meter.ts   PCM loudness envelope without retaining audio
+src/cursor.ts        Audio-reactive software-cursor rendering
 src/recorder.ts      ffmpeg capture and WAV encoding
 src/providers.ts     Groq HTTPS transcription and shared credential resolution
 src/stream.ts        Provider dispatch and Groq phrase queue/rate spacing

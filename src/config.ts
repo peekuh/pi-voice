@@ -14,6 +14,7 @@ const DEFAULTS: VoiceConfig = {
   groq: { model: "whisper-large-v3-turbo", apiKeyEnv: "GROQ_API_KEY" },
   deepgram: { model: "nova-3", apiKeyEnv: "DEEPGRAM_API_KEY" },
   capture: { ffmpegPath: "ffmpeg", device: "default" },
+  cursor: { enabled: true, reducedMotion: false },
 };
 
 const ROOT_KEYS = Object.keys(DEFAULTS);
@@ -80,6 +81,7 @@ function validate(value: unknown): VoiceConfig {
     groq: providerConfig(input.groq, "groq"),
     deepgram: providerConfig(input.deepgram, "deepgram"),
     capture: { ...DEFAULTS.capture },
+    cursor: { ...DEFAULTS.cursor },
   };
   if (Object.hasOwn(input, "provider")) result.provider = provider(input.provider);
   if (Object.hasOwn(input, "language")) {
@@ -96,6 +98,14 @@ function validate(value: unknown): VoiceConfig {
     const capture = object(input.capture, "capture", ["ffmpegPath", "device"]);
     if (Object.hasOwn(capture, "ffmpegPath")) result.capture.ffmpegPath = string(capture.ffmpegPath, "capture.ffmpegPath");
     if (Object.hasOwn(capture, "device")) result.capture.device = string(capture.device, "capture.device");
+  }
+  if (Object.hasOwn(input, "cursor")) {
+    const cursor = object(input.cursor, "cursor", ["enabled", "reducedMotion"]);
+    for (const key of ["enabled", "reducedMotion"] as const) {
+      if (!Object.hasOwn(cursor, key)) continue;
+      if (typeof cursor[key] !== "boolean") throw new Error(`Invalid voice config: cursor.${key} must be a boolean`);
+      result.cursor[key] = cursor[key];
+    }
   }
   return result;
 }

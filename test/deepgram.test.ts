@@ -62,6 +62,7 @@ function setup(context: TestContext, overrides: Partial<VoiceConfig> = {}) {
     groq: { model: "whisper-large-v3-turbo", apiKeyEnv: "UNUSED_GROQ_KEY" },
     deepgram: { model: "nova-3", apiKeyEnv: keyEnv },
     capture: { ffmpegPath: "ffmpeg", device: "default" },
+    cursor: { enabled: true, reducedMotion: false },
     ...overrides,
   };
   const socket = new FakeSocket();

@@ -8,6 +8,7 @@
 - Preserve Groq as a separately labelled phrase-HTTP option with silence filtering and ordered quota-spaced requests.
 - Import both provider keys from a labelled Desktop file into separate private key files.
 - Add a real-Pi live smoke that observes continuous WebSocket PCM, actual interim results before the first pause, zero Deepgram HTTP uploads, clean finalization, and cancellation of provisional text. Both Deepgram realtime and Groq phrase modes passed with real credentials.
+- Add a microphone-reactive software cursor with eight sound-driven height levels, cycling color, steady finalization state, exact caret restoration, reduced-motion and no-color modes.
 
 ## 0.1.0 — 2026-11-03
 

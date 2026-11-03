@@ -28,10 +28,13 @@ test("separate loads cannot mutate each other's nested configuration", async () 
     const config = await loadConfig();
     const originalModel = config.groq.model;
     const originalDevice = config.capture.device;
+    const originalMotion = config.cursor.reducedMotion;
     config.groq.model = "changed";
     config.capture.device = "changed";
+    config.cursor.reducedMotion = !originalMotion;
     assert.equal((await loadConfig()).groq.model, originalModel);
     assert.equal((await loadConfig()).capture.device, originalDevice);
+    assert.equal((await loadConfig()).cursor.reducedMotion, originalMotion);
   });
 });
 
@@ -70,6 +73,8 @@ test("strict validation rejects malformed, unknown and unsafe configuration with
       { deepgram: { endpoint: "https://example.com" } },
       { capture: { device: false } }, { capture: { ffmpegPath: "ffmpeg\u0000" } },
       { capture: { extra: true } }, { capture: "default" },
+      { cursor: "animated" }, { cursor: { enabled: 1 } }, { cursor: { reducedMotion: "yes" } },
+      { cursor: { unsupported: true } },
       JSON.parse('{"__proto__":{"polluted":true}}'),
     ];
     for (const value of invalid) {

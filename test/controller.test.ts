@@ -138,3 +138,37 @@ test("interims revise in place and cancellation removes only the uncommitted hyp
     assert.equal(draft, "existing draft first utterance");
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("microphone level follows only the current recording and resets when recording ends", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "voice-audio-level-"));
+  try {
+    const config = await loadConfig(join(dir, "missing.json"));
+    const audio: Array<(pcm: Uint8Array) => void> = [];
+    const controller = new Dictation({
+      focused: () => true,
+      update: () => {},
+      clearPreview: () => {},
+      state: () => {},
+      error: () => {},
+    }, (_config, _error, onAudio) => {
+      audio.push(onAudio!);
+      return { stop: async () => new Uint8Array(), cancel: () => {} };
+    }, () => ({ pushAudio: () => {}, finish: async () => {}, cancel: () => {} }));
+    const loud = Buffer.alloc(3200);
+    for (let offset = 0; offset < loud.length; offset += 2) loud.writeInt16LE(16_384, offset);
+    controller.start(config);
+    assert.equal(controller.audioLevel, 0);
+    audio[0](loud);
+    assert.ok(controller.audioLevel > 0.75);
+    await controller.stop();
+    assert.equal(controller.audioLevel, 0);
+    controller.start(config);
+    audio[0](loud);
+    assert.equal(controller.audioLevel, 0);
+    audio[1](loud);
+    assert.ok(controller.audioLevel > 0.75);
+    controller.cancel();
+    audio[1](loud);
+    assert.equal(controller.audioLevel, 0);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

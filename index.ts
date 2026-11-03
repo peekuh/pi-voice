@@ -1,5 +1,5 @@
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, isKittyProtocolActive, matchesKey, parseKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, isKittyProtocolActive, matchesKey, parseKey, type TUI } from "@earendil-works/pi-tui";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
@@ -10,6 +10,7 @@ import { SpaceHold } from "./src/hold.ts";
 import { startRecording } from "./src/recorder.ts";
 import { startTranscriptionStream } from "./src/stream.ts";
 import { TranscriptDraft } from "./src/transcript.ts";
+import { renderVoiceCursor } from "./src/cursor.ts";
 import type { VoiceConfig } from "./src/types.ts";
 
 export default function voice(pi: ExtensionAPI): void {
@@ -21,6 +22,9 @@ export default function voice(pi: ExtensionAPI): void {
   let transcriptDraft: TranscriptDraft | undefined;
   let enabled = true;
   let installed = false;
+  let cursorSurface: TUI | undefined;
+  let cursorLease: { surface: TUI; hardware: boolean } | undefined;
+  let cursorTimer: NodeJS.Timeout | undefined;
   const controller = new Dictation({
     focused: () => enabled && !!editor?.focused,
     update: update => {
@@ -36,9 +40,48 @@ export default function voice(pi: ExtensionAPI): void {
       const route = config.provider === "deepgram" ? "deepgram realtime" : "groq phrases";
       const label = !enabled ? "voice off" : state === "idle" ? `voice ${route} · hold Space` : `${state} · ${route} · Esc cancels`;
       context.ui.setStatus("pi-voice", label);
+      syncVoiceCursor();
     },
     error: message => context?.ui.notify(message, "error"),
   }, startRecording, startTranscriptionStream);
+
+  function restoreVoiceCursor(): void {
+    clearInterval(cursorTimer);
+    cursorTimer = undefined;
+    if (!cursorLease) return;
+    const { surface, hardware } = cursorLease;
+    cursorLease = undefined;
+    surface.setShowHardwareCursor(hardware);
+    surface.requestRender();
+  }
+
+  function syncVoiceCursor(): void {
+    const state = controller.state;
+    if (!cursorSurface || !config?.cursor.enabled || !editor?.focused || state === "idle") {
+      restoreVoiceCursor();
+      return;
+    }
+    if (!cursorLease) {
+      cursorLease = { surface: cursorSurface, hardware: cursorSurface.getShowHardwareCursor() };
+      cursorSurface.setShowHardwareCursor(false);
+    }
+    if (state === "recording" && !config.cursor.reducedMotion) {
+      if (!cursorTimer) {
+        cursorTimer = setInterval(() => {
+          if (controller.state !== "recording" || !editor?.focused) {
+            syncVoiceCursor();
+            return;
+          }
+          cursorSurface?.requestRender();
+        }, 1000 / 24);
+        cursorTimer.unref();
+      }
+    } else {
+      clearInterval(cursorTimer);
+      cursorTimer = undefined;
+    }
+    cursorSurface.requestRender();
+  }
 
   pi.on("session_start", async (_event, ctx) => {
     if (!ctx.hasUI || !process.stdout.isTTY) return;
@@ -50,6 +93,8 @@ export default function voice(pi: ExtensionAPI): void {
         return;
       }
       ctx.ui.setEditorComponent((tui, theme, keys) => {
+        restoreVoiceCursor();
+        cursorSurface = tui;
         redraw = tui.requestRender.bind(tui);
         hold?.reset();
         controller.cancel();
@@ -58,6 +103,19 @@ export default function voice(pi: ExtensionAPI): void {
           private ownedSpaces = 0;
           private lastSpaceText = "";
           private lastSpaceCursor = "";
+
+          override render(width: number): string[] {
+            const lines = super.render(width);
+            const state = controller.state;
+            if (!config.cursor.enabled || !this.focused || state === "idle") return lines;
+            return renderVoiceCursor(lines, {
+              state,
+              level: controller.audioLevel,
+              nowMs: performance.now(),
+              reducedMotion: config.cursor.reducedMotion,
+              color: !process.env.NO_COLOR,
+            });
+          }
 
           insertOwnedSpaces(count: number): void {
             transcriptDraft?.clear();
@@ -177,6 +235,8 @@ export default function voice(pi: ExtensionAPI): void {
     redraw = undefined;
     transcriptDraft = undefined;
     installed = false;
+    restoreVoiceCursor();
+    cursorSurface = undefined;
   });
 
   pi.registerCommand("voice", {

@@ -50,6 +50,7 @@ function setup(platform: NodeJS.Platform = "linux") {
     groq: { model: "whisper-large-v3-turbo", apiKeyEnv: "GROQ_API_KEY" },
     deepgram: { model: "nova-3", apiKeyEnv: "DEEPGRAM_API_KEY" },
     capture: { ffmpegPath: "/custom/ffmpeg", device: "default" },
+    cursor: { enabled: true, reducedMotion: false },
   };
   return { child, calls, errors, start, config };
 }

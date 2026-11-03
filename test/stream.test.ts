@@ -38,6 +38,7 @@ function setup(rateLimited = false) {
     groq: { model: "whisper-large-v3-turbo", apiKeyEnv: "UNUSED_GROQ_KEY" },
     deepgram: { model: "nova-3", apiKeyEnv: "UNUSED_DEEPGRAM_KEY" },
     capture: { ffmpegPath: "ffmpeg", device: "default" },
+    cursor: { enabled: true, reducedMotion: false },
   };
   const requests: PendingRequest[] = [];
   const texts: string[] = [];

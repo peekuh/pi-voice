@@ -1,4 +1,5 @@
 import type { Recording, StartRecording, StartTranscriptionStream, TranscriptionStream, TranscriptUpdate, VoiceConfig } from "./types.ts";
+import { AudioMeter } from "./audio-meter.ts";
 
 export type VoiceState = "idle" | "recording" | "transcribing";
 
@@ -23,6 +24,7 @@ export class Dictation {
   private startStream: StartTranscriptionStream;
   private current: DictationSession | undefined;
   private phase: VoiceState = "idle";
+  private readonly meter = new AudioMeter();
 
   constructor(ui: DictationUI, record: StartRecording, startStream: StartTranscriptionStream) {
     this.ui = ui;
@@ -32,9 +34,14 @@ export class Dictation {
 
   get state(): VoiceState { return this.phase; }
 
+  get audioLevel(): number {
+    return this.phase === "recording" ? this.meter.sample() : 0;
+  }
+
   start(config: VoiceConfig): void {
     if (this.current || !this.ui.focused()) return;
     this.ui.clearPreview();
+    this.meter.reset();
     const session: DictationSession = { abort: new AbortController(), hasText: false };
     this.current = session;
     const onError = (error: Error): void => {
@@ -52,7 +59,11 @@ export class Dictation {
         session.stream.cancel();
         return;
       }
-      session.recording = this.record(config, onError, pcm => session.stream?.pushAudio(pcm));
+      session.recording = this.record(config, onError, pcm => {
+        if (this.current !== session || session.abort.signal.aborted) return;
+        if (this.phase === "recording") this.meter.push(pcm);
+        session.stream?.pushAudio(pcm);
+      });
       if (this.current !== session) {
         session.recording.cancel();
         session.stream.cancel();
@@ -91,6 +102,7 @@ export class Dictation {
     current?.recording?.cancel();
     current?.stream?.cancel();
     this.ui.clearPreview();
+    this.meter.reset();
     this.setState("idle");
   }
 

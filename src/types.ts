@@ -10,6 +10,7 @@ export interface VoiceConfig {
   groq: { model: string; apiKeyEnv: string; apiKeyFile?: string };
   deepgram: { model: string; apiKeyEnv: string; apiKeyFile?: string };
   capture: { ffmpegPath: string; device: string };
+  cursor: { enabled: boolean; reducedMotion: boolean };
 }
 
 export interface Recording {
