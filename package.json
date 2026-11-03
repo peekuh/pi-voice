@@ -1,0 +1,27 @@
+{
+  "name": "pi-voice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hold-Space cloud dictation for Pi with Groq and Deepgram",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.19.0" },
+  "pi": { "extensions": ["./index.ts"] },
+  "files": ["index.ts", "src", "README.md", "LICENSE"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "install:local": "node scripts/install.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.2.0",
+    "@earendil-works/pi-tui": ">=1.2.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@earendil-works/pi-tui": "1.2.0",
+    "@types/node": "^26.0.0",
+    "typescript": "^7.0.0"
+  }
+}
