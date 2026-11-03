@@ -11,6 +11,7 @@
 - Add a microphone-reactive software cursor with eight sound-driven height levels, cycling color, steady finalization state, exact caret restoration, reduced-motion and no-color modes.
 - Extend the live-Pi smoke with actual quiet/loud cursor-render captures, color progression, reduced-motion and monochrome checks, steady finalization and native-cursor restoration; write observer snapshots atomically.
 - Stabilize the recording cursor: cache presentation independently of editor/key-repeat redraws, smooth height with hysteresis, repaint only changed glyph/color, and avoid false amplitude dips between buffered PCM arrivals.
+- Measure actual cursor-row clears during silent holds and optionally capture timed native terminal writes for motion review, rather than relying only on static cursor frames.
 
 ## 0.1.0 — 2026-11-03
 

@@ -22,6 +22,8 @@ parser.add_argument('--audio', type=Path, help='Public speech fixture; defaults 
 parser.add_argument('--reduced-motion', action='store_true', help='Verify a static recording cursor')
 parser.add_argument('--capture', type=Path, help='Save public editor-render frames for visual inspection')
 args = parser.parse_args()
+if args.capture:
+    args.capture.mkdir(parents=True,exist_ok=True)
 for executable in ['pi', 'ffmpeg', 'pactl', 'paplay']:
     if not shutil.which(executable):
         raise SystemExit(f'Missing prerequisite: {executable}')
@@ -51,10 +53,10 @@ with tempfile.TemporaryDirectory(prefix='pi-voice-live-') as temporary:
             local_config = root/'config.json'
             local_config.write_text(json.dumps(config))
             probe = root/'probe.ts'
-            probe.write_text('''import {writeFileSync,renameSync} from "node:fs";
+            probe.write_text('''import {appendFileSync,writeFileSync,renameSync} from "node:fs";
 import {CURSOR_MARKER,isKittyProtocolActive} from "@earendil-works/pi-tui";
 export default function probe(pi) {
-  let timer; let unsubscribe; let status="unknown"; let packets=0;
+  let timer; let unsubscribe; let restoreTerminal; let status="unknown"; let packets=0;
   const wire={connections:0,opens:0,audioBytes:0,interims:0,finals:[],lastText:"",lastFinal:true,firstInterimBytes:null,closeStream:0,closed:0,http:0};
   const NativeSocket=globalThis.WebSocket;
   globalThis.WebSocket=class extends NativeSocket {
@@ -106,10 +108,27 @@ export default function probe(pi) {
       const editor=factory(...parameters);
       const surface=parameters[0];
       const originalHardware=surface.getShowHardwareCursor();
+      const paintStats={renders:0,writes:0,caretWrites:0,erases:0};
+      const terminalWrite=surface.terminal.write.bind(surface.terminal);
+      surface.terminal.write=data=>{
+        paintStats.writes++;
+        const positions=[...data.matchAll(/\\x1b\\[(\\d+);(\\d+)H/g)];
+        const caret=positions.at(-1);
+        if(caret){
+          paintStats.caretWrites++;
+          for(const erased of data.matchAll(/\\x1b\\[(\\d+);1H\\x1b\\[2K/g)){
+            if(erased[1]===caret[1])paintStats.erases++;
+          }
+        }
+        if(process.env.PI_VOICE_SMOKE_WRITES)appendFileSync(process.env.PI_VOICE_SMOKE_WRITES,JSON.stringify({at:performance.now(),data})+"\\n",{mode:0o600});
+        return terminalWrite(data);
+      };
+      restoreTerminal=()=>{surface.terminal.write=terminalWrite;};
       const render=editor.render.bind(editor);
       let visual={glyph:null,rgb:null,phase:"idle",hardware:originalHardware,row:""};
       const cursorHistory=[];
       editor.render=width=>{
+        paintStats.renders++;
         const lines=render(width);
         const row=lines.find(line=>line.includes(CURSOR_MARKER))||"";
         const tail=row.slice(row.indexOf(CURSOR_MARKER)+CURSOR_MARKER.length);
@@ -123,17 +142,21 @@ export default function probe(pi) {
         }
         return lines;
       };
-      timer=setInterval(()=>{try{const file=process.env.PI_VOICE_SMOKE_SNAPSHOT;writeFileSync(file+".tmp",JSON.stringify({text:editor.getText(),cursor:editor.getCursor(),status,kitty:isKittyProtocolActive(),wire,visual,cursorHistory,originalHardware}));renameSync(file+".tmp",file);}catch{}},25);
+      timer=setInterval(()=>{try{const file=process.env.PI_VOICE_SMOKE_SNAPSHOT;writeFileSync(file+".tmp",JSON.stringify({text:editor.getText(),cursor:editor.getCursor(),status,kitty:isKittyProtocolActive(),wire,visual,cursorHistory,originalHardware,paintStats}));renameSync(file+".tmp",file);}catch{}},25);
       return editor;
     });
     },25);
   });
-  pi.on("session_shutdown",()=>{clearInterval(timer);unsubscribe?.();globalThis.WebSocket=NativeSocket;globalThis.fetch=originalFetch;});
+  pi.on("session_shutdown",()=>{clearInterval(timer);unsubscribe?.();restoreTerminal?.();globalThis.WebSocket=NativeSocket;globalThis.fetch=originalFetch;});
 }
 ''')
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 32, 150, 0, 0))
             env = {**os.environ, 'TERM': 'xterm-256color', 'PI_VOICE_CONFIG': str(local_config), 'PI_VOICE_SMOKE_SNAPSHOT': str(snapshot_file)}
+            if args.capture:
+                trace=args.capture/f'{provider}-terminal.jsonl'
+                trace.write_text('')
+                env['PI_VOICE_SMOKE_WRITES']=str(trace)
             process = subprocess.Popen(['pi', '--no-session', '-e', str(probe)], stdin=slave, stdout=slave, stderr=slave, cwd=repo, env=env, start_new_session=True)
             os.close(slave)
             terminal = bytearray()
@@ -202,11 +225,17 @@ export default function probe(pi) {
                 quiet_cursor=recording['visual']
                 visual_samples={'quiet':quiet_cursor}
                 baseline=len(captured)
+                quiet_paint=snapshot()['paintStats']
                 hold_for(1)
                 for value in captured[baseline:]:
                     assert value['text']==seed and value['cursor']==anchor['cursor'], ('Space moved cursor during silence',value)
                 if not args.reduced_motion and not os.environ.get('NO_COLOR'):
                     assert snapshot()['visual']['rgb']!=quiet_cursor['rgb'], 'Recording cursor color did not evolve'
+                measured=snapshot()['paintStats']
+                erases=measured['erases']-quiet_paint['erases']
+                assert measured['caretWrites']>quiet_paint['caretWrites'], 'No actual terminal writes observed'
+                assert erases<=16, ('Steady cursor caused excessive composer-row clears',erases)
+                print(f'{provider}: quiet held-Space cursor-row clears in 1s: {erases}',flush=True)
                 print(f'{provider}: PASS — OS-style repeat cadence, batched/unlabelled Space, cursor stationary during silence', flush=True)
                 audio_start_bytes=snapshot()['wire']['audioBytes']
                 saw_interim=False

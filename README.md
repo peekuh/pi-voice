@@ -170,6 +170,8 @@ For Deepgram, a transport observer requires one live WebSocket, continuous PCM, 
 
 The cursor checks capture actual editor-render output and native-cursor visibility. They require a quiet low-height indicator, a taller indicator during speech, changing recording colors when color is enabled, a steady finalizing indicator, and restoration after release/Escape. `--reduced-motion` verifies fixed height/color; `NO_COLOR` verifies the monochrome path. `--capture` saves public-fixture ANSI cursor frames for visual inspection without storing credentials or microphone recordings.
 
+The smoke also measures actual terminal cursor-row erases during a steady silent hold, with a generous upper bound to catch key-repeat-driven repaint regressions. The stabilization check observed 9 cursor-row clears in one second. `--capture` additionally writes timestamped native terminal-output JSONL for motion replay; this preserves the actual update timing instead of judging smoothness from still frames alone.
+
 Verified on Linux with Pi 1.2.0 / Node 26.12.1: 200 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
 
 ## Layout
