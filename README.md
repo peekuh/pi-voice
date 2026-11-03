@@ -156,6 +156,8 @@ The regression suite covers realtime interim/final transitions, owned preview re
 ```sh
 python scripts/smoke-live.py                  # Deepgram realtime
 python scripts/smoke-live.py --provider both  # Also exercise Groq phrase mode
+python scripts/smoke-live.py --reduced-motion
+env -u NO_COLOR python scripts/smoke-live.py --capture /tmp/pi-voice-cursor-frames
 ```
 
 This Linux-only smoke requires `pi`, `ffmpeg`, `pactl`, `paplay`, configured provider keys, and a running PulseAudio-compatible server. It consumes real API quota and downloads the public [Whisper JFK speech fixture](https://github.com/openai/whisper/blob/main/tests/jfk.flac).
@@ -163,6 +165,8 @@ This Linux-only smoke requires `pi`, `ffmpeg`, `pactl`, `paplay`, configured pro
 It starts actual Pi PTYs with normal installed-extension discovery and records from an isolated PulseAudio/PipeWire null-sink monitor through the real ffmpeg recorder. It injects a held-Space cadence, batched/unlabelled input, explicit and missing key-up events, bracketed paste, and a 350 ms event-loop stall. It observes real editor text/cursor snapshots, rather than substituting a fake editor or recorder.
 
 For Deepgram, a transport observer requires one live WebSocket, continuous PCM, server `is_final:false` hypotheses rendered before the first speech pause, zero prerecorded HTTP uploads, and `CloseStream` followed by clean server finalization. Final editor text must match the committed server segments without duplicated interims. A second live utterance verifies that Escape removes the owned provisional text and blocks late results.
+
+The cursor checks capture actual editor-render output and native-cursor visibility. They require a quiet low-height indicator, a taller indicator during speech, changing recording colors when color is enabled, a steady finalizing indicator, and restoration after release/Escape. `--reduced-motion` verifies fixed height/color; `NO_COLOR` verifies the monochrome path. `--capture` saves public-fixture ANSI cursor frames for visual inspection without storing credentials or microphone recordings.
 
 Verified on Linux with Pi 1.2.0 / Node 26.12.1: 185 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
 

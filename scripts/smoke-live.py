@@ -19,6 +19,8 @@ import urllib.request
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--provider', choices=['groq', 'deepgram', 'both'], default='deepgram')
 parser.add_argument('--audio', type=Path, help='Public speech fixture; defaults to Whisper JFK test audio')
+parser.add_argument('--reduced-motion', action='store_true', help='Verify a static recording cursor')
+parser.add_argument('--capture', type=Path, help='Save public editor-render frames for visual inspection')
 args = parser.parse_args()
 for executable in ['pi', 'ffmpeg', 'pactl', 'paplay']:
     if not shutil.which(executable):
@@ -45,11 +47,12 @@ with tempfile.TemporaryDirectory(prefix='pi-voice-live-') as temporary:
             snapshot_file = root/'snapshot.json'
             snapshot_file.unlink(missing_ok=True)
             config = {**base, 'provider': provider, 'capture': {'ffmpegPath': 'ffmpeg', 'device': sink+'.monitor'}}
+            config['cursor']={'enabled':True,'reducedMotion':args.reduced_motion}
             local_config = root/'config.json'
             local_config.write_text(json.dumps(config))
             probe = root/'probe.ts'
-            probe.write_text('''import {writeFileSync} from "node:fs";
-import {isKittyProtocolActive} from "@earendil-works/pi-tui";
+            probe.write_text('''import {writeFileSync,renameSync} from "node:fs";
+import {CURSOR_MARKER,isKittyProtocolActive} from "@earendil-works/pi-tui";
 export default function probe(pi) {
   let timer; let unsubscribe; let status="unknown"; let packets=0;
   const wire={connections:0,opens:0,audioBytes:0,interims:0,finals:[],lastText:"",lastFinal:true,firstInterimBytes:null,closeStream:0,closed:0,http:0};
@@ -101,7 +104,26 @@ export default function probe(pi) {
     });
     ctx.ui.setEditorComponent((...parameters)=>{
       const editor=factory(...parameters);
-      timer=setInterval(()=>{try{writeFileSync(process.env.PI_VOICE_SMOKE_SNAPSHOT,JSON.stringify({text:editor.getText(),cursor:editor.getCursor(),status,kitty:isKittyProtocolActive(),wire}));}catch{}},25);
+      const surface=parameters[0];
+      const originalHardware=surface.getShowHardwareCursor();
+      const render=editor.render.bind(editor);
+      let visual={glyph:null,rgb:null,phase:"idle",hardware:originalHardware,row:""};
+      const cursorHistory=[];
+      editor.render=width=>{
+        const lines=render(width);
+        const row=lines.find(line=>line.includes(CURSOR_MARKER))||"";
+        const tail=row.slice(row.indexOf(CURSOR_MARKER)+CURSOR_MARKER.length);
+        const match=/^(?:\\x1b\\[[\\d;:]*m)*([▁▂▃▄▅▆▇█])/u.exec(tail);
+        visual={glyph:match?.[1]||null,rgb:match?/^\\x1b\\[38;2;[\\d;]+m/.exec(tail)?.[0]||null:null,
+          phase:status.split(" ")[0],hardware:surface.getShowHardwareCursor(),row:row.split(CURSOR_MARKER).join("")};
+        const previous=cursorHistory.at(-1);
+        if(!previous||previous.phase!==visual.phase||previous.glyph!==visual.glyph){
+          cursorHistory.push({...visual});
+          if(cursorHistory.length>24)cursorHistory.shift();
+        }
+        return lines;
+      };
+      timer=setInterval(()=>{try{const file=process.env.PI_VOICE_SMOKE_SNAPSHOT;writeFileSync(file+".tmp",JSON.stringify({text:editor.getText(),cursor:editor.getCursor(),status,kitty:isKittyProtocolActive(),wire,visual,cursorHistory,originalHardware}));renameSync(file+".tmp",file);}catch{}},25);
       return editor;
     });
     },25);
@@ -176,13 +198,19 @@ export default function probe(pi) {
                 recording=snapshot()
                 assert recording['status'].startswith('recording'), recording
                 assert recording['text']==seed and recording['cursor']==anchor['cursor'], recording
+                assert recording['visual']['glyph'] is not None and not recording['visual']['hardware'], recording
+                quiet_cursor=recording['visual']
+                visual_samples={'quiet':quiet_cursor}
                 baseline=len(captured)
                 hold_for(1)
                 for value in captured[baseline:]:
                     assert value['text']==seed and value['cursor']==anchor['cursor'], ('Space moved cursor during silence',value)
+                if not args.reduced_motion and not os.environ.get('NO_COLOR'):
+                    assert snapshot()['visual']['rgb']!=quiet_cursor['rgb'], 'Recording cursor color did not evolve'
                 print(f'{provider}: PASS — OS-style repeat cadence, batched/unlabelled Space, cursor stationary during silence', flush=True)
                 audio_start_bytes=snapshot()['wire']['audioBytes']
                 saw_interim=False
+                peak_cursor=quiet_cursor
                 playing=subprocess.Popen(['paplay','--device='+sink,str(fixture)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 changes=[]
                 last=recording
@@ -191,6 +219,8 @@ export default function probe(pi) {
                     hold_for(.1)
                     value=snapshot()
                     assert value['status'].startswith('recording'), ('Hold stopped while Space was still down',value)
+                    if value['visual']['glyph'] and '▁▂▃▄▅▆▇█'.index(value['visual']['glyph'])>'▁▂▃▄▅▆▇█'.index(peak_cursor['glyph']):
+                        peak_cursor=value['visual']
                     if value['text']!=last['text']:
                         assert value['text'].endswith(' SUFFIX'), value
                         if provider=='groq':
@@ -215,7 +245,20 @@ export default function probe(pi) {
                     assert saw_interim and wire['interims']>0, ('No actual server interim rendered',snapshot())
                     assert wire['firstInterimBytes']-audio_start_bytes<3.5*32000, ('Interim did not arrive until the first pause',wire)
                 # Stopping repeats is the only release signal: finalization must still work.
-                finalized=until(lambda value:value['status'].startswith('voice '),40)
+                finalized=until(lambda value:value['status'].startswith('voice ') and value['visual']['glyph'] is None and value['visual']['hardware']==value['originalHardware'],40)
+                if args.reduced_motion:
+                    assert peak_cursor['glyph']==quiet_cursor['glyph'], 'Reduced-motion cursor changed height'
+                else:
+                    assert '▁▂▃▄▅▆▇█'.index(peak_cursor['glyph'])>'▁▂▃▄▅▆▇█'.index(quiet_cursor['glyph']), 'Sound did not raise cursor height'
+                visual_samples['loud']=peak_cursor
+                finalizing=[frame for frame in finalized['cursorHistory'] if frame['phase']=='transcribing' and frame['glyph']]
+                assert finalizing, 'No finalizing cursor was rendered'
+                assert len({frame['rgb'] for frame in finalizing})==1, 'Finalizing cursor kept cycling'
+                visual_samples['finalizing']=finalizing[-1]
+                if args.capture:
+                    args.capture.mkdir(parents=True,exist_ok=True)
+                    (args.capture/f'{provider}-cursor.json').write_text(json.dumps(visual_samples))
+                print(f"{provider}: PASS — cursor {quiet_cursor['glyph']} -> {peak_cursor['glyph']}, finalizing steady, native cursor restored",flush=True)
                 if provider=='deepgram':
                     wire=finalized['wire']
                     assert wire['connections']==1 and wire['opens']==1 and wire['audioBytes']>0, wire
@@ -244,6 +287,7 @@ export default function probe(pi) {
                 send(b'\x1b'); pump(1)
                 assert snapshot()['text']=='keep', snapshot()
                 assert snapshot()['status'].startswith('voice '), snapshot()
+                assert snapshot()['visual']['glyph'] is None and snapshot()['visual']['hardware']==snapshot()['originalHardware'], 'Escape did not restore normal cursor'
                 if provider=='deepgram':
                     print('deepgram: PASS — Escape removes the actual server interim and blocks late text',flush=True)
                 send(b'\x1b[32;1u'); pump(.5); hold_for(.8)
