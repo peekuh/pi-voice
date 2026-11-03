@@ -139,6 +139,21 @@ npm run check
 
 The regression suite covers realtime interim/final transitions, owned preview replacement, cursor and suffix preservation, cancellation, WebSocket finalization, audio bounds, held-key cadence, provider errors, and private credential import.
 
+### Live Pi smoke
+
+```sh
+python scripts/smoke-live.py                  # Deepgram realtime
+python scripts/smoke-live.py --provider both  # Also exercise Groq phrase mode
+```
+
+This Linux-only smoke requires `pi`, `ffmpeg`, `pactl`, `paplay`, configured provider keys, and a running PulseAudio-compatible server. It consumes real API quota and downloads the public [Whisper JFK speech fixture](https://github.com/openai/whisper/blob/main/tests/jfk.flac).
+
+It starts actual Pi PTYs with normal installed-extension discovery and records from an isolated PulseAudio/PipeWire null-sink monitor through the real ffmpeg recorder. It injects a held-Space cadence, batched/unlabelled input, explicit and missing key-up events, bracketed paste, and a 350 ms event-loop stall. It observes real editor text/cursor snapshots, rather than substituting a fake editor or recorder.
+
+For Deepgram, a transport observer requires one live WebSocket, continuous PCM, server `is_final:false` hypotheses rendered before the first speech pause, zero prerecorded HTTP uploads, and `CloseStream` followed by clean server finalization. Final editor text must match the committed server segments without duplicated interims. A second live utterance verifies that Escape removes the owned provisional text and blocks late results.
+
+Verified on Linux with Pi 1.2.0 / Node 26.12.1: 157 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
+
 ## Layout
 
 ```text
@@ -154,6 +169,7 @@ src/segmenter.ts     Energy-based speech boundaries, without a recognition model
 src/credentials.ts   Labelled credential-file parsing
 src/config.ts        Strict shared configuration and provider persistence
 scripts/install.ts   Pi installation and private provider-key import
+scripts/smoke-live.py Live Pi, PulseAudio, and realtime transport verification
 ```
 
 MIT licensed.

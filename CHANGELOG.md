@@ -7,6 +7,7 @@
 - Default to Deepgram realtime WebSocket transcription with continuous PCM, revisable interim text, per-segment final commits, and clean finalization on release.
 - Preserve Groq as a separately labelled phrase-HTTP option with silence filtering and ordered quota-spaced requests.
 - Import both provider keys from a labelled Desktop file into separate private key files.
+- Add a real-Pi live smoke that observes continuous WebSocket PCM, actual interim results before the first pause, zero Deepgram HTTP uploads, clean finalization, and cancellation of provisional text. Both Deepgram realtime and Groq phrase modes passed with real credentials.
 
 ## 0.1.0 — 2026-11-03
 
