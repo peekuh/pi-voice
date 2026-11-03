@@ -174,6 +174,8 @@ The cursor checks capture actual editor-render output and native-cursor visibili
 
 `--capture` additionally writes timestamped native terminal-output JSONL for motion replay; this preserves actual update timing instead of judging smoothness from still frames alone.
 
+The fullscreen smoke requires **zero composer-row erases during a settled silent hold**, verifies cursor-only paint cadence, and resizes the terminal while recording to check safe baseline recovery. The reference comparison observed 15 cursor-only paints and no row clears in one second. Reduced-motion and no-color runs also preserve restoration and text layout.
+
 Verified on Linux with Pi 1.2.0 / Node 26.12.1: 214 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
 
 ## Layout

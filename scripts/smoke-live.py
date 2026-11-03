@@ -8,6 +8,7 @@ from pathlib import Path
 import pty
 import select
 import shutil
+import signal
 import re
 import struct
 import subprocess
@@ -108,7 +109,7 @@ export default function probe(pi) {
       const editor=factory(...parameters);
       const surface=parameters[0];
       const originalHardware=surface.getShowHardwareCursor();
-      const paintStats={renders:0,writes:0,caretWrites:0,erases:0};
+      const paintStats={renders:0,writes:0,caretWrites:0,erases:0,cellPatches:0};
       const terminalWrite=surface.terminal.write.bind(surface.terminal);
       surface.terminal.write=data=>{
         paintStats.writes++;
@@ -116,6 +117,7 @@ export default function probe(pi) {
         const caret=positions.at(-1);
         if(caret){
           paintStats.caretWrites++;
+          if(/[▁▂▃▄▅▆▇█]/u.test(data)&&!data.includes("\\x1b[2K"))paintStats.cellPatches++;
           for(const erased of data.matchAll(/\\x1b\\[(\\d+);1H\\x1b\\[2K/g)){
             if(erased[1]===caret[1])paintStats.erases++;
           }
@@ -234,9 +236,19 @@ export default function probe(pi) {
                 measured=snapshot()['paintStats']
                 erases=measured['erases']-quiet_paint['erases']
                 assert measured['caretWrites']>quiet_paint['caretWrites'], 'No actual terminal writes observed'
-                assert erases<=16, ('Steady cursor caused excessive composer-row clears',erases)
-                print(f'{provider}: quiet held-Space cursor-row clears in 1s: {erases}',flush=True)
+                assert erases==0, ('Cursor-only animation erased the composer row',erases)
+                cell_patches=measured['cellPatches']-quiet_paint['cellPatches']
+                if not args.reduced_motion and not os.environ.get('NO_COLOR'):
+                    assert 8<=cell_patches<=21, ('Cursor-cell updates do not match the reference cadence',cell_patches)
+                print(f'{provider}: quiet held-Space row clears: {erases}; cursor-only paints in 1s: {cell_patches}',flush=True)
                 print(f'{provider}: PASS — OS-style repeat cadence, batched/unlabelled Space, cursor stationary during silence', flush=True)
+                for columns in (110,150):
+                    fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',32,columns,0,0))
+                    process.send_signal(signal.SIGWINCH)
+                    hold_for(.5)
+                    resized=snapshot()
+                    assert resized['text']==seed and resized['cursor']==anchor['cursor'], ('Resize corrupted the held draft',resized)
+                    assert resized['status'].startswith('recording') and resized['visual']['glyph'], resized
                 audio_start_bytes=snapshot()['wire']['audioBytes']
                 saw_interim=False
                 peak_cursor=quiet_cursor

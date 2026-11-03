@@ -13,6 +13,7 @@
 - Stabilize the recording cursor: cache presentation independently of editor/key-repeat redraws, smooth height with hysteresis, repaint only changed glyph/color, and avoid false amplitude dips between buffered PCM arrivals.
 - Measure actual cursor-row clears during silent holds and optionally capture timed native terminal writes for motion review, rather than relying only on static cursor frames.
 - Match directly observed Claude Code cursor updates: use a shared 16 Hz presentation cadence and narrow eligible fullscreen cursor-only frames to a single-cell write, preserving native rendering for text changes, resizes, unknown sequences, and regular mode.
+- Strengthen the actual-Pi smoke to require zero cursor-row clears and reference-paced cell updates, and verify resize recovery during a hold. Colored Deepgram, monochrome Groq and reduced-motion Deepgram checks passed.
 
 ## 0.1.0 — 2026-11-03
 
