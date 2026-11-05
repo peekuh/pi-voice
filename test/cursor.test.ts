@@ -7,6 +7,7 @@ import type { VoiceCursorFrame } from "../src/cursor-style.ts";
 const frame: VoiceCursorFrame = {
   state: "recording",
   level: 0,
+  active: true,
   nowMs: 0,
   reducedMotion: false,
   color: true,
@@ -37,15 +38,30 @@ test("recording immediately maps quiet through loud audio to bounded block heigh
   for (const level of [2, Infinity]) assert.equal(glyph(render({ level })), "█");
 });
 
-test("recording color changes smoothly over time and repeats after eight seconds", () => {
+test("active recording uses a four-second HSV sweep with measured fixed saturation", () => {
   const first = color(render({ nowMs: 0 }));
+  assert.equal(first, "\x1b[38;2;224;82;82m");
   assert.notEqual(color(render({ nowMs: 2_000 })), first);
-  assert.notEqual(color(render({ nowMs: 4_000 })), first);
-  assert.equal(color(render({ nowMs: 8_000 })), first);
+  assert.equal(color(render({ nowMs: 4_000 })), first);
+  assert.equal(color(render({ nowMs: -4_000 })), first);
+  for (let nowMs = 0; nowMs < 4_000; nowMs += 17) {
+    const channels = color(render({ nowMs })).match(/\d+/g)!.slice(2).map(Number);
+    assert.equal(Math.max(...channels), 224);
+    assert.equal(Math.min(...channels), 82);
+  }
   const before = color(render({ nowMs: 1_333 })).match(/\d+/g)!.slice(2).map(Number);
   const after = color(render({ nowMs: 1_334 })).match(/\d+/g)!.slice(2).map(Number);
   assert.ok(before.every((channel, index) => Math.abs(channel - after[index]) <= 1));
   assert.equal(glyph(render({ nowMs: 4_000, level: 0.5 })), glyph(render({ nowMs: 0, level: 0.5 })));
+});
+
+test("silence is neutral gray at every tail height without opacity fading", () => {
+  for (const level of [0, 0.5, 1]) {
+    for (const nowMs of [0, 1_000, 4_000, NaN, Infinity]) {
+      assert.equal(color(render({ level, nowMs, active: false })), "\x1b[38;2;128;128;128m");
+      assert.equal(glyph(render({ level, nowMs, active: false })), glyph(render({ level })));
+    }
+  }
 });
 
 test("transcribing stays muted and steady regardless of sound and time", () => {

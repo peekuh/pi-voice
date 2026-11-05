@@ -17,6 +17,8 @@
 - Add a native OMP adapter with realtime provisional text, held-Space input, and end/mid-draft audio cursor rendering. Reuse the shared providers and audio core without importing Pi-only rendering APIs or changing global OMP settings.
 - Add an interactive Pi / OMP / Both installer, explicit `--host` selection for scripts, custom agent roots, and all-destination conflict preflight. Preserve existing private credentials and provider selection.
 - Add dual-host live smoke scenarios with an actual OMP editor observer, native-Space conflict checks, voice-off behavior, and `/new` reinstallation. Keep Pi's renderer-specific assertions separate from OMP's native surface.
+- Refine cursor feel from controlled Claude Code measurements: replace double smoothing/fixed-bin stepping with one 50 ms audio envelope, use sensitive square-root RMS scaling, a four-second saturated color cycle, and neutral gray in silence.
+- Request 16 ms Linux Pulse audio fragments instead of the previous roughly 50 ms delivery, and separate fast height response from the slower color clock while preserving both host renderers and transcription transports.
 
 ## 0.1.0 — 2026-11-03
 

@@ -38,6 +38,10 @@ export class Dictation {
     return this.phase === "recording" ? this.meter.sample() : 0;
   }
 
+  get audioActive(): boolean {
+    return this.phase === "recording" && this.meter.isActive();
+  }
+
   start(config: VoiceConfig): void {
     if (this.current || !this.ui.focused()) return;
     this.ui.clearPreview();

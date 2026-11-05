@@ -4,6 +4,7 @@ import { type spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
+import { AudioMeter } from "../src/audio-meter.ts";
 import { createStartRecording, encodeWav } from "../src/recorder.ts";
 import type { VoiceConfig } from "../src/types.ts";
 
@@ -91,19 +92,33 @@ test("encodeWav rejects empty audio and incomplete PCM samples", () => {
   assert.throws(() => encodeWav(Uint8Array.of(1, 2, 3)), /incomplete 16-bit sample/);
 });
 
-test("Linux capture uses Pulse, raw mono PCM16, and array arguments without a shell", () => {
+test("Linux capture requests 16ms mono Pulse fragments and flushes raw PCM without a shell", () => {
   const fixture = setup();
   const { config, start, calls } = fixture;
   config.capture.device = "source with spaces; $(not-a-command)";
   const recording = start(config, (error) => fixture.errors.push(error));
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.command, "/custom/ffmpeg");
-  assert.deepEqual(calls[0]!.args, [
-    "-hide_banner", "-loglevel", "error", "-nostdin",
-    "-f", "pulse", "-i", "source with spaces; $(not-a-command)",
-    "-vn", "-ac", "1", "-ar", "16000",
-    "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1",
-  ]);
+  const args = calls[0]!.args;
+  const inputAt = args.indexOf("-i");
+  assert.ok(inputAt >= 0);
+  assert.equal(args[inputAt + 1], config.capture.device);
+  const input = args.slice(0, inputAt);
+  assert.equal(input[input.indexOf("-f") + 1], "pulse");
+  const sampleRate = Number(input[input.indexOf("-sample_rate") + 1]);
+  const channels = Number(input[input.indexOf("-channels") + 1]);
+  const fragmentBytes = Number(input[input.indexOf("-fragment_size") + 1]);
+  assert.equal(sampleRate, 16_000);
+  assert.equal(channels, 1);
+  assert.equal(fragmentBytes / (channels * 2), 256);
+  assert.equal(fragmentBytes / (channels * 2 * sampleRate) * 1_000, 16);
+  const output = args.slice(inputAt + 2);
+  assert.equal(output[output.indexOf("-ac") + 1], "1");
+  assert.equal(output[output.indexOf("-ar") + 1], "16000");
+  assert.equal(output[output.indexOf("-c:a") + 1], "pcm_s16le");
+  assert.equal(output[output.indexOf("-f") + 1], "s16le");
+  assert.equal(output[output.indexOf("-flush_packets") + 1], "1");
+  assert.equal(output.at(-1), "pipe:1");
   assert.deepEqual(calls[0]!.options, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   recording.cancel();
 });
@@ -111,7 +126,8 @@ test("Linux capture uses Pulse, raw mono PCM16, and array arguments without a sh
 test("Linux defaults to the default Pulse source", () => {
   const fixture = setup();
   const recording = fixture.start(fixture.config, (error) => fixture.errors.push(error));
-  assert.deepEqual(fixture.calls[0]!.args.slice(4, 8), ["-f", "pulse", "-i", "default"]);
+  const args = fixture.calls[0]!.args;
+  assert.equal(args[args.indexOf("-i") + 1], "default");
   recording.cancel();
 });
 
@@ -120,7 +136,11 @@ test("macOS default maps to audio-only avfoundation :0 and custom devices pass t
     const fixture = setup("darwin");
     fixture.config.capture.device = device!;
     const recording = fixture.start(fixture.config, (error) => fixture.errors.push(error));
-    assert.deepEqual(fixture.calls[0]!.args.slice(4, 8), ["-f", "avfoundation", "-i", expected]);
+    const args = fixture.calls[0]!.args;
+    assert.equal(args[args.indexOf("-f") + 1], "avfoundation");
+    assert.equal(args[args.indexOf("-i") + 1], expected);
+    assert.equal(args.includes("-fragment_size"), false);
+    assert.equal(args.includes("-flush_packets"), false);
     recording.cancel();
   }
 });
@@ -131,7 +151,11 @@ test("Windows requires a named DirectShow device and unsupported platforms fail 
   assert.equal(windows.calls.length, 0);
   windows.config.capture.device = "Microphone (USB Audio)";
   const recording = windows.start(windows.config, (error) => windows.errors.push(error));
-  assert.deepEqual(windows.calls[0]!.args.slice(4, 8), ["-f", "dshow", "-i", "audio=Microphone (USB Audio)"]);
+  const args = windows.calls[0]!.args;
+  assert.equal(args[args.indexOf("-f") + 1], "dshow");
+  assert.equal(args[args.indexOf("-i") + 1], "audio=Microphone (USB Audio)");
+  assert.equal(args.includes("-fragment_size"), false);
+  assert.equal(args.includes("-flush_packets"), false);
   recording.cancel();
   const unsupported = setup("freebsd");
   assert.throws(() => unsupported.start(unsupported.config, () => {}), /not supported on freebsd/);
@@ -315,6 +339,30 @@ test("raw PCM callbacks receive every recording and stopping chunk without chang
   assert.deepEqual([...(await stopped).subarray(44)], [1, 2, 3, 4, 5, 6]);
   fixture.child.stdout.emit("data", Buffer.from([7, 8]));
   assert.equal(audio.length, 2);
+  assert.deepEqual(fixture.errors, []);
+});
+
+test("arbitrary stdout boundaries feed complete meter windows and preserve stop-flushed PCM", async () => {
+  const fixture = setup();
+  const meter = new AudioMeter();
+  const audio = Buffer.alloc(1_024);
+  for (let offset = 0; offset < 512; offset += 2) audio.writeInt16LE(16_000, offset);
+  const recording = fixture.start(fixture.config, (error) => fixture.errors.push(error), (chunk) => meter.push(chunk, 0));
+  fixture.child.stdout.write(audio.subarray(0, 1));
+  fixture.child.stdout.write(audio.subarray(1, 511));
+  assert.equal(meter.sample(0), 0);
+  assert.equal(meter.isActive(0), false);
+  fixture.child.stdout.write(audio.subarray(511, 512));
+  const peak = meter.sample(0);
+  assert.ok(peak > 0.25);
+  assert.equal(meter.isActive(0), true);
+  const stopped = recording.stop();
+  fixture.child.stdout.write(audio.subarray(512, 513));
+  fixture.child.stdout.write(audio.subarray(513));
+  assert.ok(meter.sample(0) < peak);
+  assert.equal(meter.isActive(0), false);
+  fixture.child.close(255);
+  assert.deepEqual((await stopped).subarray(44), audio);
   assert.deepEqual(fixture.errors, []);
 });
 

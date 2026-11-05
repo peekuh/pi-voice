@@ -158,17 +158,22 @@ test("microphone level follows only the current recording and resets when record
     for (let offset = 0; offset < loud.length; offset += 2) loud.writeInt16LE(16_384, offset);
     controller.start(config);
     assert.equal(controller.audioLevel, 0);
+    assert.equal(controller.audioActive, false);
     audio[0](loud);
     assert.ok(controller.audioLevel > 0.75);
+    assert.equal(controller.audioActive, true);
     await controller.stop();
     assert.equal(controller.audioLevel, 0);
+    assert.equal(controller.audioActive, false);
     controller.start(config);
     audio[0](loud);
     assert.equal(controller.audioLevel, 0);
+    assert.equal(controller.audioActive, false);
     audio[1](loud);
     assert.ok(controller.audioLevel > 0.75);
     controller.cancel();
     audio[1](loud);
     assert.equal(controller.audioLevel, 0);
+    assert.equal(controller.audioActive, false);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

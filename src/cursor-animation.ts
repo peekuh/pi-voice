@@ -1,29 +1,29 @@
 import type { VoiceCursorFrame } from "./cursor-style.ts";
 
-export const CURSOR_FRAME_INTERVAL_MS = 1_000 / 16;
-const attackMs = 45;
-const releaseMs = 80;
-const heightHysteresis = 0.15;
-
-// Fast attack follows speech; slower release damps quiet gaps. At 16 Hz, a full
-// seven-bin sweep finishes in roughly 440 ms without skipping heights.
-// Color advances on the same presentation ticks, never on host key repeats.
+export const CURSOR_FRAME_INTERVAL_MS = 1_000 / 60;
+const colorIntervalMs = 1_000 / 15;
 
 export class CursorAnimation {
   private cached: VoiceCursorFrame | undefined;
   private lastTickMs: number | undefined;
-  private smoothedLevel = 0;
-  private height = 0;
+  private lastNowMs: number | undefined;
+  private recordingStartMs: number | undefined;
 
   update(input: VoiceCursorFrame): VoiceCursorFrame {
-    const steady = input.state === "transcribing" || input.reducedMotion;
-    const modeChanged = this.cached?.state !== input.state
-      || this.cached.reducedMotion !== input.reducedMotion;
-
-    if (steady) {
+    const nowMs = Number.isFinite(input.nowMs) ? Math.max(0, input.nowMs) : undefined;
+    const stateChanged = this.cached?.state !== input.state;
+    const modeChanged = stateChanged || this.cached?.reducedMotion !== input.reducedMotion;
+    if (stateChanged) {
+      this.recordingStartMs = input.state === "recording" ? nowMs : undefined;
       this.lastTickMs = undefined;
-      this.smoothedLevel = 0;
-      this.height = 0;
+      this.lastNowMs = undefined;
+    }
+    if (input.state === "recording" && this.recordingStartMs === undefined && nowMs !== undefined) {
+      this.recordingStartMs = nowMs;
+    }
+
+    if (input.state === "transcribing" || input.reducedMotion) {
+      this.lastTickMs = undefined;
       if (modeChanged || this.cached?.color !== input.color) {
         this.cached = {
           ...input,
@@ -33,44 +33,30 @@ export class CursorAnimation {
       }
       return this.cached!;
     }
-    const nowMs = Number.isFinite(input.nowMs) ? Math.max(0, input.nowMs) : undefined;
-    if (!this.cached || modeChanged) {
-      this.smoothedLevel = Number.isNaN(input.level) ? 0 : Math.max(0, Math.min(1, input.level));
-      this.height = Math.round(this.smoothedLevel * 7);
-      this.lastTickMs = nowMs;
-      this.cached = {
-        ...input,
-        level: this.height / 7,
-        nowMs: nowMs ?? 0,
-      };
-      return this.cached;
+
+    const validClock = nowMs !== undefined && (this.lastNowMs === undefined || nowMs >= this.lastNowMs);
+    if (validClock) this.lastNowMs = nowMs;
+    const tick = validClock && (this.lastTickMs === undefined
+      || nowMs - this.lastTickMs + 0.001 >= CURSOR_FRAME_INTERVAL_MS);
+    let level = this.cached?.level ?? 0;
+    if (modeChanged || tick) {
+      const strength = Number.isNaN(input.level) ? 0 : Math.max(0, Math.min(1, input.level));
+      level = (Math.max(1, Math.round(strength * 8)) - 1) / 7;
+      if (validClock) {
+        this.lastTickMs = this.lastTickMs === undefined ? nowMs
+          : this.lastTickMs + Math.floor((nowMs - this.lastTickMs + 0.001) / CURSOR_FRAME_INTERVAL_MS) * CURSOR_FRAME_INTERVAL_MS;
+      }
     }
-
-    if (this.cached.color !== input.color) this.cached = { ...this.cached, color: input.color };
-    if (nowMs === undefined) return this.cached;
-    if (this.lastTickMs === undefined || nowMs < this.lastTickMs) {
-      this.lastTickMs = nowMs;
-      return this.cached;
+    let colorTimeMs = this.cached?.nowMs ?? 0;
+    if (modeChanged) colorTimeMs = 0;
+    // Silence holds the painted frame, but not the session-relative hue clock.
+    if (validClock && input.active && input.color && (tick || this.cached?.active !== input.active || this.cached?.color !== input.color || modeChanged)) {
+      const elapsedMs = Math.max(0, nowMs - (this.recordingStartMs ?? nowMs));
+      colorTimeMs = Math.floor((elapsedMs + 0.001) / colorIntervalMs) * colorIntervalMs;
     }
-
-    const elapsedMs = nowMs - this.lastTickMs;
-    if (elapsedMs + 0.001 < CURSOR_FRAME_INTERVAL_MS) return this.cached;
-    // Keep the presentation phase under irregular polling without replaying missed frames.
-    this.lastTickMs += Math.floor((elapsedMs + 0.001) / CURSOR_FRAME_INTERVAL_MS) * CURSOR_FRAME_INTERVAL_MS;
-    const target = Number.isNaN(input.level) ? 0 : Math.max(0, Math.min(1, input.level));
-    const timeConstantMs = target > this.smoothedLevel ? attackMs : releaseMs;
-    // A stalled host gets one normal interpolation step, never a catch-up flash.
-    const interpolation = -Math.expm1(-Math.min(elapsedMs, CURSOR_FRAME_INTERVAL_MS) / timeConstantMs);
-    this.smoothedLevel += (target - this.smoothedLevel) * interpolation;
-    const position = this.smoothedLevel * 7;
-    // A 0.15-bin dead band around each rounding boundary suppresses adjacent-bin chatter.
-    if (this.height < 7 && position > this.height + 0.5 + heightHysteresis) this.height++;
-    else if (this.height > 0 && position < this.height - 0.5 - heightHysteresis) this.height--;
-
-    const level = this.height / 7;
-    const colorTimeMs = this.lastTickMs;
-    if (this.cached.level !== level || this.cached.nowMs !== colorTimeMs) {
-      this.cached = { ...this.cached, level, nowMs: colorTimeMs };
+    if (modeChanged || !this.cached || this.cached.level !== level || this.cached.nowMs !== colorTimeMs
+      || this.cached.active !== input.active || this.cached.color !== input.color) {
+      this.cached = { ...input, level, nowMs: colorTimeMs };
     }
     return this.cached;
   }
@@ -78,7 +64,7 @@ export class CursorAnimation {
   reset(): void {
     this.cached = undefined;
     this.lastTickMs = undefined;
-    this.smoothedLevel = 0;
-    this.height = 0;
+    this.lastNowMs = undefined;
+    this.recordingStartMs = undefined;
   }
 }

@@ -45,7 +45,7 @@ function captureArguments(config: VoiceConfig, platform: NodeJS.Platform): strin
   const device = config.capture.device || "default";
   let input: string[];
   if (platform === "linux") {
-    input = ["-f", "pulse", "-i", device];
+    input = ["-f", "pulse", "-sample_rate", String(SAMPLE_RATE), "-channels", "1", "-fragment_size", "512", "-i", device];
   } else if (platform === "darwin") {
     input = ["-f", "avfoundation", "-i", device === "default" ? ":0" : device];
   } else if (platform === "win32") {
@@ -60,7 +60,9 @@ function captureArguments(config: VoiceConfig, platform: NodeJS.Platform): strin
     "-hide_banner", "-loglevel", "error", "-nostdin",
     ...input,
     "-vn", "-ac", "1", "-ar", String(SAMPLE_RATE),
-    "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1",
+    "-c:a", "pcm_s16le", "-f", "s16le",
+    ...(platform === "linux" ? ["-flush_packets", "1"] : []),
+    "pipe:1",
   ];
 }
 

@@ -75,6 +75,7 @@ export default function voice(pi: ExtensionAPI): void {
     const frame = cursorAnimation.update({
       state,
       level: controller.audioLevel,
+      active: controller.audioActive,
       nowMs: performance.now(),
       reducedMotion: config.cursor.reducedMotion,
       color: !process.env.NO_COLOR,

@@ -1,18 +1,19 @@
 const SAMPLE_RATE = 16_000;
-const WINDOW_SAMPLES = SAMPLE_RATE * 20 / 1_000;
-const FLOOR_DB = -60;
-const LOUD_DB = -12;
-const ATTACK_WEIGHT = 1 - Math.exp(-20 / 8);
-const PEAK_HOLD_MS = 40;
+const WINDOW_SAMPLES = 256;
+const WINDOW_MS = WINDOW_SAMPLES * 1_000 / SAMPLE_RATE;
+const ENVELOPE_TAU_MS = 50;
+const ENVELOPE_WEIGHT = 1 - Math.exp(-WINDOW_MS / ENVELOPE_TAU_MS);
+const HEIGHT_GAIN = 60 / 8;
+const ACTIVE_RMS = 0.001;
 const TRANSPORT_GRACE_MS = 200;
-const RELEASE_MS = 140;
 
 export class AudioMeter {
   private lowByte = -1;
   private windowEnergy = 0;
   private windowSamples = 0;
-  private level = 0;
-  private holdMs = 0;
+  private strength = 0;
+  private active = false;
+  private lastWindowMs: number | undefined;
   private lastInputMs: number | undefined;
   private clockMs: number | undefined;
 
@@ -21,17 +22,18 @@ export class AudioMeter {
     let offset = 0;
     if (pcm.byteLength === 0) return;
     if (this.lastInputMs !== undefined) {
-      // Batching/jitter is not silence; PCM windows still drive the audio envelope.
+      // Arrival jitter is not silence; completed PCM windows drive the envelope.
       const durationMs = pcm.byteLength * 1_000 / (SAMPLE_RATE * 2);
-      this.release(Math.max(0, now - this.lastInputMs - Math.max(TRANSPORT_GRACE_MS, durationMs)), 0);
+      const gapMs = Math.max(0, now - this.lastInputMs - Math.max(TRANSPORT_GRACE_MS, durationMs));
+      this.strength *= Math.exp(-gapMs / ENVELOPE_TAU_MS);
     }
     this.lastInputMs = now;
     if (this.lowByte >= 0) {
-      this.consume(this.lowByte | pcm[offset++]! << 8);
+      this.consume(this.lowByte | pcm[offset++]! << 8, now);
       this.lowByte = -1;
     }
     while (offset + 1 < pcm.byteLength) {
-      this.consume(pcm[offset]! | pcm[offset + 1]! << 8);
+      this.consume(pcm[offset]! | pcm[offset + 1]! << 8, now);
       offset += 2;
     }
     if (offset < pcm.byteLength) this.lowByte = pcm[offset]!;
@@ -41,8 +43,9 @@ export class AudioMeter {
     this.lowByte = -1;
     this.windowEnergy = 0;
     this.windowSamples = 0;
-    this.level = 0;
-    this.holdMs = 0;
+    this.strength = 0;
+    this.active = false;
+    this.lastWindowMs = undefined;
     this.lastInputMs = undefined;
     this.clockMs = undefined;
   }
@@ -50,8 +53,13 @@ export class AudioMeter {
   sample(nowMs = performance.now()): number {
     const now = this.time(nowMs);
     if (this.lastInputMs === undefined) return 0;
-    const releaseMs = Math.max(0, now - this.lastInputMs - TRANSPORT_GRACE_MS - this.holdMs);
-    return Math.max(0, Math.min(1, this.level - releaseMs / RELEASE_MS));
+    const staleMs = Math.max(0, now - this.lastInputMs - TRANSPORT_GRACE_MS);
+    return this.strength * Math.exp(-staleMs / ENVELOPE_TAU_MS);
+  }
+
+  isActive(nowMs = performance.now()): boolean {
+    const now = this.time(nowMs);
+    return this.active && this.lastWindowMs !== undefined && now - this.lastWindowMs <= TRANSPORT_GRACE_MS;
   }
 
   private time(nowMs: number): number {
@@ -61,25 +69,17 @@ export class AudioMeter {
     return this.clockMs ?? 0;
   }
 
-  private consume(unsigned: number): void {
+  private consume(unsigned: number, now: number): void {
     const sample = unsigned >= 0x8000 ? unsigned - 0x1_0000 : unsigned;
     this.windowEnergy += sample * sample;
     if (++this.windowSamples !== WINDOW_SAMPLES) return;
     const rms = Math.sqrt(this.windowEnergy / WINDOW_SAMPLES) / 0x8000;
-    const target = rms <= 0.001 ? 0 : Math.min(1, (20 * Math.log10(rms) - FLOOR_DB) / (LOUD_DB - FLOOR_DB));
+    // This square-root sensitivity fits measured Claude cursor heights, not its internals.
+    const target = Math.min(1, HEIGHT_GAIN * Math.sqrt(rms));
+    this.strength += (target - this.strength) * ENVELOPE_WEIGHT;
+    this.active = rms > ACTIVE_RMS;
+    this.lastWindowMs = now;
     this.windowEnergy = 0;
     this.windowSamples = 0;
-    if (target >= this.level && target > 0) {
-      this.level += (target - this.level) * ATTACK_WEIGHT;
-      this.holdMs = PEAK_HOLD_MS;
-    } else {
-      this.release(WINDOW_SAMPLES * 1_000 / SAMPLE_RATE, target);
-    }
-  }
-
-  private release(elapsedMs: number, floor: number): void {
-    const releaseMs = Math.max(0, elapsedMs - this.holdMs);
-    this.holdMs = Math.max(0, this.holdMs - elapsedMs);
-    this.level = Math.max(floor, this.level - releaseMs / RELEASE_MS);
   }
 }

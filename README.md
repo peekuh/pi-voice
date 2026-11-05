@@ -66,9 +66,11 @@ Space taps insert immediately. Initial candidate spaces are rolled back once a s
 
 ### Audio-reactive recording cursor
 
-While recording, a colorful software cursor replaces the ordinary caret at the same insertion point. Its height follows the microphone's local PCM level: quiet input shows a short block and louder input grows toward a full-height block. Audio and color share a cached 16 Hz presentation clock, matching the roughly 60–65 ms cursor updates observed in a real Claude Code session. Ordinary key-repeat/editor redraws reuse that appearance instead of resampling it.
+While recording, the cursor responds to microphone volume through a single 50 ms RMS envelope with square-root sensitivity. Height can change on each acoustic/display update (up to 60 Hz); it is no longer forced to climb or fall one block per 16 Hz tick. Linux capture requests mono 16 kHz audio in 512-byte fragments—measured at approximately 16 ms per callback instead of the previous 50 ms delivery.
 
-The level meter allows 200 ms for normal buffered microphone delivery before treating missing data as a stale input. Actual silent PCM still lowers the level promptly; ordinary audio-chunk gaps no longer produce a drop/rebound effect.
+Active sound uses a four-second saturated hue cycle. Silence turns the cursor neutral gray immediately while its height finishes decaying. The color clock runs independently at about 15 Hz and continues its phase through silence. This follows controlled-audio measurements of Claude Code 2.1.318 rather than assuming its color-update cadence was also its height-update cadence.
+
+The envelope still tolerates 200 ms of missing audio delivery before treating a stalled input as stale. Actual silent PCM does not wait for that grace period. Ordinary key-repeat/editor redraws reuse the cached appearance; unchanged glyph/color frames do not repaint.
 
 In Pi's default fullscreen mode, cursor-only animation updates the cursor cell rather than clearing and repainting the composer row. A scoped output adapter narrows only a recognized native frame whose surrounding row bytes are unchanged. Text edits, cursor movement, resizing, screen clears, unknown output formats, and regular-screen mode retain Pi's normal rendering path. No independent background terminal writes or installed-Pi patches are used.
 
@@ -187,13 +189,26 @@ The OMP run keeps native `stt.enabled` true in a temporary overlay, verifies tha
 
 For Deepgram, a transport observer requires one live WebSocket, continuous PCM, server `is_final:false` hypotheses rendered before the first speech pause, zero prerecorded HTTP uploads, and `CloseStream` followed by clean server finalization. Final editor text must match the committed server segments without duplicated interims. A second live utterance verifies that Escape removes the owned provisional text and blocks late results.
 
-The cursor checks capture actual editor-render output and native-cursor visibility. They require a quiet low-height indicator, a taller indicator during speech, changing recording colors when color is enabled, a steady finalizing indicator, and restoration after release/Escape. `--reduced-motion` verifies fixed height/color; `NO_COLOR` verifies the monochrome path. `--capture` saves public-fixture ANSI cursor frames for visual inspection without storing credentials or microphone recordings.
+The cursor checks capture actual editor-render output and native-cursor visibility. They require a small neutral-gray cursor in silence, taller levels with the measured active-color saturation during speech, a steady finalizing indicator, and restoration after release/Escape. `--reduced-motion` verifies fixed height/color; `NO_COLOR` verifies the monochrome path. `--capture` saves public-fixture ANSI cursor frames without storing credentials or microphone recordings.
 
 `--capture` additionally writes timestamped native terminal-output JSONL for motion replay; this preserves actual update timing instead of judging smoothness from still frames alone.
 
-The Pi fullscreen smoke requires **zero composer-row erases during a settled silent hold**, verifies cursor-only paint cadence, and resizes the terminal while recording to check safe baseline recovery. OMP uses its own component renderer; its smoke checks the resulting cursor, display width, resize behavior, and restored native cursor rather than assuming Pi's output-frame format.
+The Pi fullscreen smoke requires **zero composer-row erases and zero cursor-only animation paints during settled silence**, then verifies reactive speech updates and resize recovery. OMP uses its own component renderer; its smoke checks the resulting cursor, display width, resize behavior, and restored native cursor rather than assuming Pi's output-frame format.
 
-Verified on Linux with Pi 1.2.0 and OMP 18.8.4: 240 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and Groq phrase transcription. These are real CLI sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside the CLI remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
+Verified on Linux with Pi 1.2.0 and OMP 18.8.4: 246 regression tests plus TypeScript checking, live realtime transcription and cancellation in both hosts, and controlled-volume cursor captures. These are real CLI sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside the CLI remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
+
+### Controlled-volume reference check
+
+The same 440 Hz PCM tone sequence was played through isolated PulseAudio monitors into actual Claude Code, Pi, and OMP sessions. Steady-state height measurements:
+
+| Sine amplitude | Claude Code 2.1.318 | Pi voice | OMP voice |
+| --- | ---: | ---: | ---: |
+| −50 dBFS | 3 | 3 | 3 |
+| −35 dBFS | 7 | 7 | 7 |
+| −20 dBFS | 8 | 8 | 8 |
+| Silence | 1, gray | 1, gray | 1, gray |
+
+The fitted response reaches full height in roughly 150 ms on the strong step and returns to minimum in roughly 100 ms after silent PCM. Claude's observed updates showed similar rapid, non-uniform transitions. The four-second hue period and fixed active RGB bounds (82–224) were measured directly. This is a fit to observable behavior, not a claim about Claude's internal implementation or a guarantee of identical perception on every terminal.
 
 ## Layout
 

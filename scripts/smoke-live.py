@@ -148,15 +148,14 @@ with tempfile.TemporaryDirectory(prefix='pi-voice-live-') as temporary:
                 for value in captured[baseline:]:
                     assert value['text']==seed and value['cursor']==anchor['cursor'], ('Space moved cursor during silence',value)
                 if not args.reduced_motion and not os.environ.get('NO_COLOR'):
-                    assert snapshot()['visual']['rgb']!=quiet_cursor['rgb'], 'Recording cursor color did not evolve'
+                    assert quiet_cursor['rgb']=='\x1b[38;2;128;128;128m' and snapshot()['visual']['rgb']==quiet_cursor['rgb'], 'Silence should keep a neutral steady cursor'
                 measured=snapshot()['paintStats']
                 erases=measured['erases']-quiet_paint['erases']
                 assert measured['writes']>quiet_paint['writes'], 'No actual terminal writes observed'
                 cell_patches=measured['cellPatches']-quiet_paint['cellPatches']
                 if args.host=='pi':
                     assert erases==0, ('Cursor-only animation erased the composer row',erases)
-                    if not args.reduced_motion and not os.environ.get('NO_COLOR'):
-                        assert 8<=cell_patches<=21, ('Cursor-cell updates do not match the reference cadence',cell_patches)
+                    assert cell_patches==0, ('Silent cursor kept repainting',cell_patches)
                 print(f'{provider}: quiet held-Space row clears: {erases}; cursor-only paints in 1s: {cell_patches}',flush=True)
                 print(f'{provider}: PASS — OS-style repeat cadence, batched/unlabelled Space, cursor stationary during silence', flush=True)
                 for columns in (110,150):
@@ -169,6 +168,7 @@ with tempfile.TemporaryDirectory(prefix='pi-voice-live-') as temporary:
                 audio_start_bytes=snapshot()['wire']['audioBytes']
                 saw_interim=False
                 peak_cursor=quiet_cursor
+                speaking_colors=set()
                 playing=subprocess.Popen(['paplay','--device='+sink,str(fixture)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 changes=[]
                 last=recording
@@ -177,6 +177,9 @@ with tempfile.TemporaryDirectory(prefix='pi-voice-live-') as temporary:
                     hold_for(.1)
                     value=snapshot()
                     assert value['status'].startswith('recording'), ('Hold stopped while Space was still down',value)
+                    rgb=value['visual']['rgb']
+                    if rgb and rgb!='\x1b[38;2;128;128;128m':
+                        speaking_colors.add(rgb)
                     if value['visual']['glyph'] and '▁▂▃▄▅▆▇█'.index(value['visual']['glyph'])>'▁▂▃▄▅▆▇█'.index(peak_cursor['glyph']):
                         peak_cursor=value['visual']
                     if value['text']!=last['text']:
@@ -209,6 +212,11 @@ with tempfile.TemporaryDirectory(prefix='pi-voice-live-') as temporary:
                     assert peak_cursor['glyph']==quiet_cursor['glyph'], 'Reduced-motion cursor changed height'
                 else:
                     assert '▁▂▃▄▅▆▇█'.index(peak_cursor['glyph'])>'▁▂▃▄▅▆▇█'.index(quiet_cursor['glyph']), 'Sound did not raise cursor height'
+                    if not os.environ.get('NO_COLOR'):
+                        assert len(speaking_colors)>=3, 'Active speech did not advance its color cycle'
+                        for rgb in speaking_colors:
+                            channels=[int(v) for v in re.findall(r'\d+',rgb)[2:]]
+                            assert min(channels)==82 and max(channels)==224, ('Active color did not match the reference saturation',rgb)
                 visual_samples['loud']=peak_cursor
                 finalizing=[frame for frame in finalized['cursorHistory'] if frame['phase']=='transcribing' and frame['glyph']]
                 assert finalizing, 'No finalizing cursor was rendered'

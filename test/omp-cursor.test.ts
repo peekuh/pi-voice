@@ -9,6 +9,7 @@ const metrics = { marker, visibleWidth };
 const frame: VoiceCursorFrame = {
   state: "recording",
   level: 1,
+  active: true,
   nowMs: 0,
   reducedMotion: false,
   color: true,
@@ -46,7 +47,8 @@ for (const foreground of ["\x1b[31m", "\x1b[38;5;180m", "\x1b[38;2;10;20;30m", "
   test(`native paint restores the inherited foreground ${JSON.stringify(foreground)}`, () => {
     const input = "\x1b[1;44m" + foreground + "before" + marker + "x suffix\x1b[0m";
     const result = paintOmpCursor([input], frame, metrics)[0];
-    assert.ok(result.includes("\x1b[38;2;94;211;139m█" + foreground + " suffix\x1b[0m"));
+    assert.ok(result.includes("█" + foreground + " suffix\x1b[0m"));
+    assert.match(result.slice(result.indexOf(marker) + marker.length), /^\x1b\[38;2;\d+;\d+;\d+m█/);
     assert.ok(result.startsWith("\x1b[1;44m" + foreground + "before" + marker));
     assert.equal(visibleWidth(result), visibleWidth(input));
   });
