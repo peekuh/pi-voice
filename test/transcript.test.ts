@@ -218,3 +218,62 @@ test("a leading combining mark never takes ownership of an existing space", () =
   assert.equal(editor.text, "prefix ");
   assert.deepEqual(editor.operations, []);
 });
+
+class NativePreviewEditor extends Editor {
+  private previewLength = 0;
+  private history: Array<{ text: string; offset: number }> = [];
+
+  nativePreview = {
+    set: (text: string) => {
+      this.dropPreview();
+      this.insertText(text);
+      this.previewLength = text.length;
+    },
+    commit: (text: string) => {
+      this.dropPreview();
+      this.history.push({ text: this.text, offset: this.offset });
+      this.insertText(text);
+    },
+    clear: () => this.dropPreview(),
+  };
+
+  private dropPreview(): void {
+    this.text = this.text.slice(0, this.offset - this.previewLength) + this.text.slice(this.offset);
+    this.offset -= this.previewLength;
+    this.previewLength = 0;
+  }
+
+  undo(): void {
+    const prior = this.history.pop();
+    if (prior) {
+      this.text = prior.text;
+      this.offset = prior.offset;
+    }
+  }
+}
+
+test("native provisional updates do not become separate undo steps and identical finals commit", () => {
+  const editor = new NativePreviewEditor("left right", 5);
+  const draft = new TranscriptDraft(editor);
+  draft.update({ text: "hello", final: false });
+  draft.update({ text: "hello world", final: false });
+  draft.update({ text: "hello world", final: true });
+  assert.equal(editor.text, "left hello world right");
+  draft.update({ text: "temporary", final: false });
+  draft.clear();
+  assert.equal(editor.text, "left hello world right");
+  editor.undo();
+  assert.equal(editor.text, "left right");
+  assert.equal(editor.offset, 5);
+});
+
+test("lost native-preview ownership cannot delete user edits on cancellation or a later dictation", () => {
+  const editor = new NativePreviewEditor("prefix ");
+  const draft = new TranscriptDraft(editor);
+  draft.update({ text: "preview", final: false });
+  editor.insertText(" user edit");
+  draft.clear();
+  assert.equal(editor.text, "prefix preview user edit");
+  assert.throws(() => draft.update({ text: "later speech", final: false }), /lost its editor position/);
+  assert.equal(editor.text, "prefix preview user edit");
+});

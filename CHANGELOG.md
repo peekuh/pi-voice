@@ -14,6 +14,8 @@
 - Measure actual cursor-row clears during silent holds and optionally capture timed native terminal writes for motion review, rather than relying only on static cursor frames.
 - Match directly observed Claude Code cursor updates: use a shared 16 Hz presentation cadence and narrow eligible fullscreen cursor-only frames to a single-cell write, preserving native rendering for text changes, resizes, unknown sequences, and regular mode.
 - Strengthen the actual-Pi smoke to require zero cursor-row clears and reference-paced cell updates, and verify resize recovery during a hold. Colored Deepgram, monochrome Groq and reduced-motion Deepgram checks passed.
+- Add a native OMP adapter with realtime provisional text, held-Space input, and end/mid-draft audio cursor rendering. Reuse the shared providers and audio core without importing Pi-only rendering APIs or changing global OMP settings.
+- Add an interactive Pi / OMP / Both installer, explicit `--host` selection for scripts, custom agent roots, and all-destination conflict preflight. Preserve existing private credentials and provider selection.
 
 ## 0.1.0 — 2026-11-03
 

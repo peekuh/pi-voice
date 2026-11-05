@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CURSOR_MARKER, renderFakeCursor, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { CURSOR_FRAME_INTERVAL_MS, CursorAnimation } from "../src/cursor-animation.ts";
-import { renderVoiceCursor, type VoiceCursorFrame } from "../src/cursor.ts";
+import { renderVoiceCursor } from "../src/cursor.ts";
+import type { VoiceCursorFrame } from "../src/cursor-style.ts";
 
 function frame(nowMs: number, level = 0, overrides: Partial<VoiceCursorFrame> = {}): VoiceCursorFrame {
   return { state: "recording", level, nowMs, reducedMotion: false, color: true, ...overrides };

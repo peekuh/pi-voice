@@ -1,19 +1,19 @@
 # pi-voice
 
-Hold-Space dictation for the **Pi coding agent**, with **Deepgram realtime streaming** and an optional **Groq phrase-transcription** backend.
+Hold-Space dictation for **Pi and OMP**, with **Deepgram realtime streaming** and an optional **Groq phrase-transcription** backend.
 
 Deepgram is the default: microphone PCM is sent continuously over one WebSocket, interim text updates in place, and final results commit without duplication. Release flushes the server's final results. Groq instead uploads completed speech phrases. No local recognition model, LLM cleanup, spoken replies, or automatic submission.
 
-**Pi only.** This package does not install into, modify, or claim compatibility with OMP.
+Separate native host adapters share the recording, transcription, held-key detection, configuration, and audio-meter code. OMP uses native provisional-text and cursor APIs; it does not load the Pi-specific fake-cursor/output adapter.
 
 ## Requirements
 
-- Pi 1.2.0 or newer; Node.js 22.19 or newer.
+- Pi 1.2.0+ or OMP 18.8.4+, with the chosen CLI's supported runtime. Node.js 22.19+ runs the installer and development checks.
 - `ffmpeg` on PATH and permission to use the microphone.
 - A Groq or Deepgram API key and an internet connection.
-- No other extension replacing Pi's editor or implementing voice input.
+- No other extension replacing the selected host's main editor or implementing competing voice input.
 
-Verified on Linux with Pi 1.2.0 and Node 26.12.1. Linux recording uses the default PulseAudio/PipeWire source. The recorder also has macOS AVFoundation and Windows DirectShow argument handling, but those platforms have not been live-tested. Windows requires an explicit `capture.device`.
+Verified on Linux with Pi 1.2.0 and OMP 18.8.4. Linux recording uses the default PulseAudio/PipeWire source. The recorder also has macOS AVFoundation and Windows DirectShow argument handling, but those platforms have not been live-tested. Windows requires an explicit `capture.device`.
 
 ## Install this checkout
 
@@ -21,17 +21,32 @@ Verified on Linux with Pi 1.2.0 and Node 26.12.1. Linux recording uses the defau
 npm run install:local
 ```
 
-The installer writes `~/.pi/agent/extensions/cloud-voice.ts`, importing this checkout by absolute path. Keep the checkout in place. Restart Pi or run `/reload`.
+The interactive installer detects available CLIs and asks **Pi**, **OMP**, or **Both**. Scripts/noninteractive shells must select explicitly:
+
+```sh
+npm run install:local -- --host pi
+npm run install:local -- --host omp
+npm run install:local -- --host both
+```
+
+It writes only the selected entrypoints:
+
+- `~/.pi/agent/extensions/cloud-voice.ts` imports `index.ts`.
+- `~/.omp/agent/extensions/cloud-voice.ts` imports `omp.ts`.
+
+Keep this checkout in place: imports are absolute. Restart Pi or run `/reload`; restart OMP. Both destinations are checked before writing anything, and unrelated existing extensions are never overwritten. For custom agent roots or OMP profiles, use `--pi-dir /path/to/pi-agent` and `--omp-dir /path/to/omp-profile/agent`.
+
+OMP's native Space handler is disabled only on the extension-owned editor, even when `/voice off` is selected; ordinary spaces then type normally. No global OMP settings or keybinding files are modified. Main TUI sessions only: the adapter does not register interactive state in OMP subagents or headless/RPC sessions.
 
 To import a labelled file containing both keys without putting them in shell history:
 
 ```sh
-npm run install:local -- --keys-file /absolute/path/to/api-keys.txt
+npm run install:local -- --host both --keys-file /absolute/path/to/api-keys.txt
 ```
 
 Use `Groq: ...` and `Deepgram: ...` on separate lines (`GROQ_API_KEY=...` and `DEEPGRAM_API_KEY=...` also work). The installer stores raw copies in `~/.config/pi-voice/groq.key` and `deepgram.key`, with mode `0600`, and references them from the config. The source file is left untouched. For a file containing only a raw Groq key, use `--groq-key-file` instead. An unrelated existing `cloud-voice.ts` is never overwritten.
 
-Installing the extension requires no runtime npm dependencies: Pi provides its editor and keyboard APIs. To develop or run the checks:
+Installing the local entrypoints requires no runtime npm dependencies: each CLI supplies its own editor and keyboard APIs. Both hosts share `~/.config/pi-voice/config.json` and private credential files. Development checks use both hosts' type packages:
 
 ```sh
 npm ci --ignore-scripts
@@ -176,12 +191,15 @@ The cursor checks capture actual editor-render output and native-cursor visibili
 
 The fullscreen smoke requires **zero composer-row erases during a settled silent hold**, verifies cursor-only paint cadence, and resizes the terminal while recording to check safe baseline recovery. The reference comparison observed 15 cursor-only paints and no row clears in one second. Reduced-motion and no-color runs also preserve restoration and text layout.
 
-Verified on Linux with Pi 1.2.0 / Node 26.12.1: 214 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and both-provider interaction smokes. These are real Pi sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside Pi remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
+Verified on Linux with Pi 1.2.0 and OMP 18.8.4: 240 regression tests plus TypeScript checking, live Deepgram interim/final rendering, cancellation, and Groq phrase transcription. These are real CLI sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside the CLI remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
 
 ## Layout
 
 ```text
 index.ts             Pi editor and slash-command integration
+omp.ts               Native OMP editor, volatile transcript and cursor adapter
+src/omp-cursor.ts    Native OMP mid-draft cursor painting
+src/cursor-style.ts  Host-independent cursor appearance
 src/hold.ts          Space gesture and legacy repeat-gap detection
 src/controller.ts    Recording/transcription ownership and cancellation
 src/audio-meter.ts   PCM loudness envelope without retaining audio
@@ -196,7 +214,8 @@ src/transcript.ts    Owned interim span replacement and final commits
 src/segmenter.ts     Energy-based speech boundaries, without a recognition model
 src/credentials.ts   Labelled credential-file parsing
 src/config.ts        Strict shared configuration and provider persistence
-scripts/install.ts   Pi installation and private provider-key import
+scripts/install.ts   Host-specific entrypoints and private provider-key import
+scripts/install-host.ts Interactive host detection and selection
 scripts/smoke-live.py Live Pi, PulseAudio, and realtime transport verification
 ```
 

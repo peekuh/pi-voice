@@ -6,6 +6,11 @@ export interface TranscriptPort {
   getLines(): string[];
   insertText(text: string): void;
   deleteBackward(graphemes: number): void;
+  nativePreview?: {
+    set(text: string): void;
+    commit(text: string): void;
+    clear(): void;
+  };
 }
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -15,6 +20,7 @@ export class TranscriptDraft {
   private expectedText: string;
   private expectedCursor: { line: number; col: number };
   private readonly port: TranscriptPort;
+  private nativePreviewLost = false;
 
   constructor(port: TranscriptPort) {
     this.port = port;
@@ -23,6 +29,7 @@ export class TranscriptDraft {
   }
 
   update(update: TranscriptUpdate): void {
+    if (this.nativePreviewLost) throw new Error("Dictation preview lost its editor position; restart the session before dictating again.");
     if (!this.ownsPosition()) {
       throw new Error("Dictation stopped because the editor text or cursor changed; your edits were preserved.");
     }
@@ -38,7 +45,11 @@ export class TranscriptDraft {
       throw new Error("Dictation cannot insert this transcript without changing an existing character; your text was preserved.");
     }
 
-    if (insertion !== this.pending) {
+    if (this.port.nativePreview) {
+      if (update.final) this.port.nativePreview.commit(insertion);
+      else if (insertion !== this.pending) this.port.nativePreview.set(insertion);
+      this.rememberPosition();
+    } else if (insertion !== this.pending) {
       this.removePending();
       if (insertion) this.port.insertText(insertion);
       this.rememberPosition();
@@ -48,7 +59,10 @@ export class TranscriptDraft {
 
   clear(): void {
     try {
-      if (this.pending && this.ownsPosition()) this.removePending();
+      if (this.pending) {
+        if (this.ownsPosition()) this.removePending();
+        else if (this.port.nativePreview) this.nativePreviewLost = true;
+      }
       this.rememberPosition();
     } catch {
       // Cancellation must not interfere with an editor that is being detached.
@@ -70,9 +84,13 @@ export class TranscriptDraft {
 
   private removePending(): void {
     if (!this.pending) return;
-    let count = 0;
-    for (const _ of graphemes.segment(this.pending)) count++;
+    if (this.port.nativePreview) {
+      this.port.nativePreview.clear();
+    } else {
+      let count = 0;
+      for (const _ of graphemes.segment(this.pending)) count++;
+      this.port.deleteBackward(count);
+    }
     this.pending = "";
-    this.port.deleteBackward(count);
   }
 }

@@ -2,12 +2,29 @@
   "name": "pi-voice",
   "version": "0.1.0",
   "private": true,
-  "description": "Hold-Space cloud dictation for Pi with Groq and Deepgram",
+  "description": "Hold-Space realtime cloud dictation for Pi and OMP with Deepgram and Groq",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.19.0" },
-  "pi": { "extensions": ["./index.ts"] },
-  "files": ["index.ts", "src", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./omp.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "omp.ts",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
@@ -16,11 +33,29 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.2.0",
-    "@earendil-works/pi-tui": ">=1.2.0"
+    "@earendil-works/pi-tui": ">=1.2.0",
+    "@oh-my-pi/pi-coding-agent": ">=18.8.4",
+    "@oh-my-pi/pi-tui": ">=18.8.4"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-tui": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.2.0",
     "@earendil-works/pi-tui": "1.2.0",
+    "@oh-my-pi/pi-coding-agent": "18.8.4",
+    "@oh-my-pi/pi-tui": "18.8.4",
     "@types/node": "^26.0.0",
     "typescript": "^7.0.0"
   }

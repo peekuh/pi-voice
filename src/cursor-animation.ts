@@ -1,4 +1,4 @@
-import type { VoiceCursorFrame } from "./cursor.ts";
+import type { VoiceCursorFrame } from "./cursor-style.ts";
 
 export const CURSOR_FRAME_INTERVAL_MS = 1_000 / 16;
 const attackMs = 45;

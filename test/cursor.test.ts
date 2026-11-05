@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CURSOR_MARKER, renderFakeCursor, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { renderVoiceCursor, type VoiceCursorFrame } from "../src/cursor.ts";
+import { renderVoiceCursor } from "../src/cursor.ts";
+import type { VoiceCursorFrame } from "../src/cursor-style.ts";
 
 const frame: VoiceCursorFrame = {
   state: "recording",
