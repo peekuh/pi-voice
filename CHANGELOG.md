@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Remove Pi's automatic voice footer while preserving the audio-reactive cursor, errors, and explicit `/voice` status commands.
+- Remove OMP's automatic voice footer while preserving native cursor feedback, errors, explicit `/voice` commands, and session-switch behavior.
 - Match OMP-style held-key suppression using repeat cadence rather than treating Kitty negotiation as a guarantee of repeat/release labels.
 - Handle batched spaces and Pi-split sub-millisecond bursts without advancing the cursor during an active hold. Preserve immediate taps and safely roll back only owned candidate spaces.
 - Default to Deepgram realtime WebSocket transcription with continuous PCM, revisable interim text, per-segment final commits, and clean finalization on release.

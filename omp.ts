@@ -45,13 +45,7 @@ export default function voice(omp: ExtensionAPI): void {
       transcriptDraft?.clear();
       redraw();
     },
-    state: state => {
-      if (!context || !config || !installed) return;
-      const route = config.provider === "deepgram" ? "deepgram realtime" : "groq phrases";
-      const label = !enabled ? "voice off" : state === "idle" ? `voice ${route} · hold Space` : `${state} · ${route} · Esc cancels`;
-      context.ui.setStatus("pi-voice", label);
-      syncVoiceCursor();
-    },
+    state: syncVoiceCursor,
     error: message => context?.ui.notify(message, "error"),
   }, startRecording, startTranscriptionStream);
 
@@ -341,7 +335,6 @@ export default function voice(omp: ExtensionAPI): void {
     unsubscribeInput?.();
     unsubscribeInput = undefined;
     if (installed) ctx.ui.setEditorComponent(undefined);
-    ctx.ui.setStatus("pi-voice", undefined);
     editor = undefined;
     editorFactory = undefined;
     transcriptDraft = undefined;

@@ -64,7 +64,7 @@ Space taps insert immediately. Initial candidate spaces are rolled back once a s
 
 **Ctrl+Shift+R** toggles recording without a hold. **Escape** or **Ctrl+C** cancels capture and pending responses, removing only the owned interim hypothesis; finalized text remains. Focus loss, session replacement, and extension shutdown also cancel pending work. Another editing key clears the provisional preview before performing its normal action. Submitting the draft cancels pending transcription so it cannot appear in the next prompt. User edits are never replaced wholesale.
 
-Pi does not add an automatic voice-status line beneath the session status bar. Use `/voice status` or `/voice doctor` when you want details; recording feedback stays at the cursor.
+Neither Pi nor OMP adds an automatic voice-status line beneath the session status bar. Use `/voice status` or `/voice doctor` when you want details; recording feedback stays at the cursor.
 
 ### Audio-reactive recording cursor
 
