@@ -16,6 +16,7 @@
 - Strengthen the actual-Pi smoke to require zero cursor-row clears and reference-paced cell updates, and verify resize recovery during a hold. Colored Deepgram, monochrome Groq and reduced-motion Deepgram checks passed.
 - Add a native OMP adapter with realtime provisional text, held-Space input, and end/mid-draft audio cursor rendering. Reuse the shared providers and audio core without importing Pi-only rendering APIs or changing global OMP settings.
 - Add an interactive Pi / OMP / Both installer, explicit `--host` selection for scripts, custom agent roots, and all-destination conflict preflight. Preserve existing private credentials and provider selection.
+- Add dual-host live smoke scenarios with an actual OMP editor observer, native-Space conflict checks, voice-off behavior, and `/new` reinstallation. Keep Pi's renderer-specific assertions separate from OMP's native surface.
 
 ## 0.1.0 — 2026-11-03
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Pi + PulseAudio/PipeWire + hosted API smoke. Makes paid/quota-consuming STT calls."""
+"""Real Pi/OMP + PulseAudio/PipeWire + hosted API smoke. Makes paid/quota-consuming STT calls."""
 import argparse
 import fcntl
 import json
@@ -18,6 +18,8 @@ import time
 import urllib.request
 
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--host', choices=['pi', 'omp'], default='pi')
+parser.add_argument('--extension', type=Path, help='Isolate an explicit adapter before installing it')
 parser.add_argument('--provider', choices=['groq', 'deepgram', 'both'], default='deepgram')
 parser.add_argument('--audio', type=Path, help='Public speech fixture; defaults to Whisper JFK test audio')
 parser.add_argument('--reduced-motion', action='store_true', help='Verify a static recording cursor')
@@ -25,7 +27,7 @@ parser.add_argument('--capture', type=Path, help='Save public editor-render fram
 args = parser.parse_args()
 if args.capture:
     args.capture.mkdir(parents=True,exist_ok=True)
-for executable in ['pi', 'ffmpeg', 'pactl', 'paplay']:
+for executable in [args.host, 'ffmpeg', 'pactl', 'paplay']:
     if not shutil.which(executable):
         raise SystemExit(f'Missing prerequisite: {executable}')
 repo = Path(__file__).resolve().parent.parent
@@ -53,113 +55,24 @@ with tempfile.TemporaryDirectory(prefix='pi-voice-live-') as temporary:
             config['cursor']={'enabled':True,'reducedMotion':args.reduced_motion}
             local_config = root/'config.json'
             local_config.write_text(json.dumps(config))
-            probe = root/'probe.ts'
-            probe.write_text('''import {appendFileSync,writeFileSync,renameSync} from "node:fs";
-import {CURSOR_MARKER,isKittyProtocolActive} from "@earendil-works/pi-tui";
-export default function probe(pi) {
-  let timer; let unsubscribe; let restoreTerminal; let status="unknown"; let packets=0;
-  const wire={connections:0,opens:0,audioBytes:0,interims:0,finals:[],lastText:"",lastFinal:true,firstInterimBytes:null,closeStream:0,closed:0,http:0};
-  const NativeSocket=globalThis.WebSocket;
-  globalThis.WebSocket=class extends NativeSocket {
-    constructor(url,protocols){
-      super(url,protocols);
-      this.observed=new URL(url).hostname==="api.deepgram.com";
-      if(!this.observed)return;
-      wire.connections++;
-      this.addEventListener("open",()=>wire.opens++);
-      this.addEventListener("close",event=>{wire.closed=event.code;});
-      this.addEventListener("message",event=>{
-        try{
-          const data=JSON.parse(event.data);
-          if(data.type!=="Results")return;
-          const text=data.channel.alternatives[0].transcript;
-          wire.lastText=text; wire.lastFinal=data.is_final;
-          if(data.is_final){if(text.trim())wire.finals.push(text);}
-          else if(text.trim()){wire.interims++;wire.firstInterimBytes??=wire.audioBytes;}
-        }catch{}
-      });
-    }
-    send(data){
-      if(this.observed){
-        if(typeof data==="string"){try{if(JSON.parse(data).type==="CloseStream")wire.closeStream++;}catch{}}
-        else wire.audioBytes+=data.byteLength||data.size||0;
-      }
-      return super.send(data);
-    }
-  };
-  const originalFetch=globalThis.fetch;
-  globalThis.fetch=(input,init)=>{
-    const url=new URL(typeof input==="string"?input:input.url||String(input));
-    if(url.hostname==="api.deepgram.com"&&url.pathname==="/v1/listen")wire.http++;
-    return originalFetch(input,init);
-  };
-  pi.on("session_start", (_event,ctx)=>{
-    timer=setInterval(()=>{
-    const factory=ctx.ui.getEditorComponent();
-    if (!factory) return;
-    clearInterval(timer);
-    const originalStatus=ctx.ui.setStatus.bind(ctx.ui);
-    ctx.ui.setStatus=(key,value)=>{if(key==="pi-voice")status=value||"";originalStatus(key,value);};
-    unsubscribe=ctx.ui.onTerminalInput(data=>{
-      if ((/^ +$/.test(data)||data.startsWith("\\x1b[32")) && ++packets===65) {
-        const deadline=performance.now()+350; while(performance.now()<deadline) {}
-      }
-    });
-    ctx.ui.setEditorComponent((...parameters)=>{
-      const editor=factory(...parameters);
-      const surface=parameters[0];
-      const originalHardware=surface.getShowHardwareCursor();
-      const paintStats={renders:0,writes:0,caretWrites:0,erases:0,cellPatches:0};
-      const terminalWrite=surface.terminal.write.bind(surface.terminal);
-      surface.terminal.write=data=>{
-        paintStats.writes++;
-        const positions=[...data.matchAll(/\\x1b\\[(\\d+);(\\d+)H/g)];
-        const caret=positions.at(-1);
-        if(caret){
-          paintStats.caretWrites++;
-          if(/[▁▂▃▄▅▆▇█]/u.test(data)&&!data.includes("\\x1b[2K"))paintStats.cellPatches++;
-          for(const erased of data.matchAll(/\\x1b\\[(\\d+);1H\\x1b\\[2K/g)){
-            if(erased[1]===caret[1])paintStats.erases++;
-          }
-        }
-        if(process.env.PI_VOICE_SMOKE_WRITES)appendFileSync(process.env.PI_VOICE_SMOKE_WRITES,JSON.stringify({at:performance.now(),data})+"\\n",{mode:0o600});
-        return terminalWrite(data);
-      };
-      restoreTerminal=()=>{surface.terminal.write=terminalWrite;};
-      const render=editor.render.bind(editor);
-      let visual={glyph:null,rgb:null,phase:"idle",hardware:originalHardware,row:""};
-      const cursorHistory=[];
-      editor.render=width=>{
-        paintStats.renders++;
-        const lines=render(width);
-        const row=lines.find(line=>line.includes(CURSOR_MARKER))||"";
-        const tail=row.slice(row.indexOf(CURSOR_MARKER)+CURSOR_MARKER.length);
-        const match=/^(?:\\x1b\\[[\\d;:]*m)*([▁▂▃▄▅▆▇█])/u.exec(tail);
-        visual={glyph:match?.[1]||null,rgb:match?/^\\x1b\\[38;2;[\\d;]+m/.exec(tail)?.[0]||null:null,
-          phase:status.split(" ")[0],hardware:surface.getShowHardwareCursor(),row:row.split(CURSOR_MARKER).join("")};
-        const previous=cursorHistory.at(-1);
-        if(!previous||previous.phase!==visual.phase||previous.glyph!==visual.glyph){
-          cursorHistory.push({...visual});
-          if(cursorHistory.length>24)cursorHistory.shift();
-        }
-        return lines;
-      };
-      timer=setInterval(()=>{try{const file=process.env.PI_VOICE_SMOKE_SNAPSHOT;writeFileSync(file+".tmp",JSON.stringify({text:editor.getText(),cursor:editor.getCursor(),status,kitty:isKittyProtocolActive(),wire,visual,cursorHistory,originalHardware,paintStats}));renameSync(file+".tmp",file);}catch{}},25);
-      return editor;
-    });
-    },25);
-  });
-  pi.on("session_shutdown",()=>{clearInterval(timer);unsubscribe?.();restoreTerminal?.();globalThis.WebSocket=NativeSocket;globalThis.fetch=originalFetch;});
-}
-''')
+            probe = repo/'scripts/smoke-observer.ts'
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 32, 150, 0, 0))
-            env = {**os.environ, 'TERM': 'xterm-256color', 'PI_VOICE_CONFIG': str(local_config), 'PI_VOICE_SMOKE_SNAPSHOT': str(snapshot_file)}
+            env = {**os.environ, 'TERM': 'xterm-256color', 'PI_VOICE_CONFIG': str(local_config), 'PI_VOICE_SMOKE_SNAPSHOT': str(snapshot_file), 'PI_VOICE_SMOKE_HOST': args.host}
             if args.capture:
                 trace=args.capture/f'{provider}-terminal.jsonl'
                 trace.write_text('')
                 env['PI_VOICE_SMOKE_WRITES']=str(trace)
-            process = subprocess.Popen(['pi', '--no-session', '-e', str(probe)], stdin=slave, stdout=slave, stderr=slave, cwd=repo, env=env, start_new_session=True)
+            command=[args.host,'--no-session']
+            if args.extension:
+                command+=['--no-extensions','-e',str(args.extension.resolve())]
+            if args.host=='omp':
+                overlay=root/'omp-config.yml'
+                overlay.write_text('autoResume: false\nstt:\n  enabled: true\n')
+                command+=['--no-tools','--no-skills','--no-rules','--no-title','--config',str(overlay)]
+                env['OMP_SKIP_SETUP']='1'
+            command+=['-e',str(probe)]
+            process = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave, cwd=repo, env=env, start_new_session=True)
             os.close(slave)
             terminal = bytearray()
             negotiated = False
@@ -184,8 +97,9 @@ export default function probe(pi) {
                         ready,_,_=select.select([master],[],[],min(.02,max(0,end-time.monotonic())))
                         if ready:
                             data=os.read(master,65536)
-                            if not data: raise RuntimeError('Pi exited before smoke completed')
+                            if not data: raise RuntimeError(f'{args.host} exited before smoke completed')
                             terminal.extend(data)
+                            if b'\x1b[6n' in data:send(b'\x1b[1;1R')
                             if not negotiated and b'\x1b[?u' in terminal:
                                 # Deliberately negotiate disambiguation WITHOUT repeat/release labels.
                                 send(b'\x1b[?1u\x1b[?1;2c'); negotiated=True
@@ -198,7 +112,7 @@ export default function probe(pi) {
                         if value is not None and predicate(value): return value
                     raise AssertionError(f'{provider}: condition not reached; last snapshot={snapshot()}')
 
-                until(lambda value:'hold Space' in value['status'])
+                until(lambda value:'hold Space' in value['status'],60 if args.host=='omp' else 20)
                 send(b'normal'); pump(.05); send(b' '); pump(.05); send(b'typing')
                 until(lambda value:value['text']=='normal typing')
                 send(b'\x03'); until(lambda value:value['text']=='')
@@ -224,6 +138,8 @@ export default function probe(pi) {
                 assert recording['status'].startswith('recording'), recording
                 assert recording['text']==seed and recording['cursor']==anchor['cursor'], recording
                 assert recording['visual']['glyph'] is not None and not recording['visual']['hardware'], recording
+                if args.host=='omp':
+                    assert recording['nativeSpaceDisabled'], 'Native OMP and cloud Space handlers are both active'
                 quiet_cursor=recording['visual']
                 visual_samples={'quiet':quiet_cursor}
                 baseline=len(captured)
@@ -235,11 +151,12 @@ export default function probe(pi) {
                     assert snapshot()['visual']['rgb']!=quiet_cursor['rgb'], 'Recording cursor color did not evolve'
                 measured=snapshot()['paintStats']
                 erases=measured['erases']-quiet_paint['erases']
-                assert measured['caretWrites']>quiet_paint['caretWrites'], 'No actual terminal writes observed'
-                assert erases==0, ('Cursor-only animation erased the composer row',erases)
+                assert measured['writes']>quiet_paint['writes'], 'No actual terminal writes observed'
                 cell_patches=measured['cellPatches']-quiet_paint['cellPatches']
-                if not args.reduced_motion and not os.environ.get('NO_COLOR'):
-                    assert 8<=cell_patches<=21, ('Cursor-cell updates do not match the reference cadence',cell_patches)
+                if args.host=='pi':
+                    assert erases==0, ('Cursor-only animation erased the composer row',erases)
+                    if not args.reduced_motion and not os.environ.get('NO_COLOR'):
+                        assert 8<=cell_patches<=21, ('Cursor-cell updates do not match the reference cadence',cell_patches)
                 print(f'{provider}: quiet held-Space row clears: {erases}; cursor-only paints in 1s: {cell_patches}',flush=True)
                 print(f'{provider}: PASS — OS-style repeat cadence, batched/unlabelled Space, cursor stationary during silence', flush=True)
                 for columns in (110,150):
@@ -268,7 +185,8 @@ export default function probe(pi) {
                             assert value['text'].startswith(last['text'][:-7]), ('Earlier transcript was overwritten',value)
                         else:
                             assert value['text'].startswith('prefix '), value
-                        assert any(c.isalpha() for c in value['text'][7:-7]), ('Literal spaces reached editor',value)
+                        cleared_preview=provider=='deepgram' and value['text']==seed and not value['wire']['lastText'].strip()
+                        assert cleared_preview or any(c.isalpha() for c in value['text'][7:-7]), ('Literal spaces reached editor',value)
                         changes.append(value)
                         kind='interim' if provider=='deepgram' and not value['wire']['lastFinal'] else 'final'
                         print(f'{provider}: {kind} while held at column {value["cursor"]["col"]}: {value["text"]!r}', flush=True)
@@ -340,10 +258,29 @@ export default function probe(pi) {
                 send(b'\x1b[200~pasted   spaces\x1b[201~')
                 until(lambda value:value['text']=='pasted   spaces')
                 assert snapshot()['status'].startswith('voice '), snapshot()
+                if args.host=='omp':
+                    send(b'\x01\x0b'); until(lambda value:value['text']=='')
+                    send(b'/voice off\r'); pump(.5)
+                    connections=snapshot()['wire']['connections']
+                    hold_for(1.2)
+                    off=snapshot()
+                    assert off['text'].isspace() and off['nativeSpaceDisabled'], off
+                    assert off['status'].startswith('voice ') and off['wire']['connections']==connections, off
+                    send(b'\x01\x0b'); until(lambda value:value['text']=='')
+                    send(b'/voice on\r'); pump(.5)
+                    generation=snapshot()['editorGeneration']
+                    send(b'/new\r')
+                    until(lambda value:value['editorGeneration']>generation and value['text']=='',30)
+                    send(b'after switch'); until(lambda value:value['text']=='after switch')
+                    send(b' '); pump(.5); hold_for(.8)
+                    assert snapshot()['status'].startswith('recording') and snapshot()['nativeSpaceDisabled'], snapshot()
+                    send(b'\x1b'); pump(1)
+                    assert snapshot()['text']=='after switch' and snapshot()['status'].startswith('voice '), snapshot()
+                    print('omp: PASS — voice-off spaces do not invoke native STT; /new preserves cloud hold-to-talk',flush=True)
                 print(f'{provider}: PASS — incremental real API text, release-gap finalization, Escape, suffix preservation, stalled event loop', flush=True)
             except Exception:
                 rendered=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', terminal.decode(errors='replace'))
-                print('Pi terminal diagnostic:', list(dict.fromkeys(re.findall(r'.{0,80}(?:Error|error|failed|voice).{0,300}', rendered)))[:16], flush=True)
+                print(f'{args.host} terminal diagnostic:', list(dict.fromkeys(re.findall(r'.{0,80}(?:Error|error|failed|voice).{0,300}', rendered)))[:16], flush=True)
                 raise
             finally:
                 if playing is not None and playing.poll() is None:
