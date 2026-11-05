@@ -6,7 +6,7 @@ interface ProbeEditor {
   getCursor(): { line: number; col: number };
   render(width: number): string[];
   spaceHold?: { handler?: unknown; keys: readonly unknown[] };
-  readonly voiceState?: "idle" | "recording" | "transcribing";
+  readonly voiceState: "idle" | "recording" | "transcribing";
 }
 interface ProbeSurface {
   terminal: { write(data: string): void };
@@ -19,7 +19,6 @@ interface ProbeContext {
   hasUI: boolean;
   agent?: { kind: string };
   ui: {
-    setStatus(key: string, value: string | undefined): void;
     onTerminalInput(handler: (data: string) => void): () => void;
     getEditorComponent?(): ProbeFactory | undefined;
     setEditorComponent(factory: ProbeFactory): void;
@@ -88,7 +87,7 @@ export default function observe(api: { on(name: string, handler: (event: unknown
     clearInterval(timer);
     editorGeneration++;
     if (typeof editor?.getCursor !== "function") throw new Error("Voice smoke could not find the live editor");
-    if (process.env.PI_VOICE_SMOKE_HOST === "omp" && editor.voiceState === undefined) throw new Error("OMP voice adapter is not the active editor");
+    if (editor.voiceState === undefined) throw new Error("Voice adapter is not the active editor");
     const originalHardware = surface.getShowHardwareCursor();
     const paintStats = { renders: 0, writes: 0, caretWrites: 0, erases: 0, cellPatches: 0 };
     const terminalWrite = surface.terminal.write.bind(surface.terminal);
@@ -113,8 +112,8 @@ export default function observe(api: { on(name: string, handler: (event: unknown
     const cursorHistory: typeof visual[] = [];
     editor.render = (width: number) => {
       paintStats.renders++;
-      if (editor.voiceState !== undefined) status = editor.voiceState === "idle" ? "voice ready · hold Space" : `${editor.voiceState} · voice`;
-      if (editor.voiceState === "recording" && ++recordingFrames === 20) {
+      status = editor.voiceState === "idle" ? "voice ready · hold Space" : `${editor.voiceState} · voice`;
+      if (process.env.PI_VOICE_SMOKE_HOST === "omp" && editor.voiceState === "recording" && ++recordingFrames === 20) {
         const deadline = performance.now() + 350;
         while (performance.now() < deadline) {}
       }
@@ -160,11 +159,6 @@ export default function observe(api: { on(name: string, handler: (event: unknown
 
   api.on("session_start", async (_event, ctx) => {
     if (!ctx.hasUI || !process.stdout.isTTY || ctx.agent?.kind === "sub") return;
-    const originalStatus = ctx.ui.setStatus.bind(ctx.ui);
-    ctx.ui.setStatus = (key: string, value: string | undefined) => {
-      if (key === "pi-voice") status = value ?? "";
-      originalStatus(key, value);
-    };
     unsubscribe = ctx.ui.onTerminalInput((data: string) => {
       if ((/^ +$/.test(data) || data.startsWith("\x1b[32")) && ++packets === 65) {
         const deadline = performance.now() + 350;

@@ -55,14 +55,16 @@ npm run check
 
 ## Dictate
 
-1. Hold **Space** until the footer says `recording` (minimum 600 ms plus enough repeats to recognize the cadence).
+1. Hold **Space** until the recording cursor appears (minimum 600 ms plus enough repeats to recognize the cadence).
 2. Speak while holding. Space repeats do not move the cursor. Deepgram's interim transcript updates as speech arrives and may revise earlier words in the current hypothesis.
-3. Release to finalize the stream. Wait for the footer to return to idle before reviewing the final text.
+3. Release to finalize the stream. Wait for the normal cursor to return before reviewing the final text.
 4. Review the text and press **Enter** yourself.
 
 Space taps insert immediately. Initial candidate spaces are rolled back once a steady held-key cadence is recognized; only spaces still owned by that gesture can be removed. Detection does not assume that a terminal advertising Kitty support labels repeats or sends releases. Plain repeat bursts, Pi-split sub-millisecond callbacks, and batched spaces are handled. Explicit key-up events end the hold when supplied; otherwise a 250 ms repeat gap does. A late timer after an event-loop stall defers release so queued repeats can drain.
 
 **Ctrl+Shift+R** toggles recording without a hold. **Escape** or **Ctrl+C** cancels capture and pending responses, removing only the owned interim hypothesis; finalized text remains. Focus loss, session replacement, and extension shutdown also cancel pending work. Another editing key clears the provisional preview before performing its normal action. Submitting the draft cancels pending transcription so it cannot appear in the next prompt. User edits are never replaced wholesale.
+
+Pi does not add an automatic voice-status line beneath the session status bar. Use `/voice status` or `/voice doctor` when you want details; recording feedback stays at the cursor.
 
 ### Audio-reactive recording cursor
 

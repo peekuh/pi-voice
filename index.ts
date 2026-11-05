@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, configPath, saveProvider } from "./src/config.ts";
-import { Dictation } from "./src/controller.ts";
+import { Dictation, type VoiceState } from "./src/controller.ts";
 import { SpaceHold } from "./src/hold.ts";
 import { startRecording } from "./src/recorder.ts";
 import { startTranscriptionStream } from "./src/stream.ts";
@@ -44,13 +44,7 @@ export default function voice(pi: ExtensionAPI): void {
       transcriptDraft?.clear();
       redraw?.();
     },
-    state: state => {
-      if (!context?.hasUI || !config) return;
-      const route = config.provider === "deepgram" ? "deepgram realtime" : "groq phrases";
-      const label = !enabled ? "voice off" : state === "idle" ? `voice ${route} · hold Space` : `${state} · ${route} · Esc cancels`;
-      context.ui.setStatus("pi-voice", label);
-      syncVoiceCursor();
-    },
+    state: syncVoiceCursor,
     error: message => context?.ui.notify(message, "error"),
   }, startRecording, startTranscriptionStream);
 
@@ -155,6 +149,8 @@ export default function voice(pi: ExtensionAPI): void {
           private ownedSpaces = 0;
           private lastSpaceText = "";
           private lastSpaceCursor = "";
+
+          get voiceState(): VoiceState { return controller.state; }
 
           override render(width: number): string[] {
             const lines = super.render(width);
@@ -276,7 +272,6 @@ export default function voice(pi: ExtensionAPI): void {
     hold?.reset();
     controller.cancel();
     if (installed) context?.ui.setEditorComponent(undefined);
-    context?.ui.setStatus("pi-voice", undefined);
     editor = undefined;
     redraw = undefined;
     transcriptDraft = undefined;
