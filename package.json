@@ -40,6 +40,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
     "check": "npm run typecheck && npm test",
+    "check:package": "node scripts/smoke-package.ts",
     "install:local": "node scripts/install.ts"
   },
   "peerDependencies": {

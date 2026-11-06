@@ -4,6 +4,7 @@
 
 - Install Pi through its native Git package manager by default, with an explicit native local-development source. Remove only verified legacy wrappers after successful installation; preserve unrelated extensions, settings, resource filters, and credentials.
 - Keep OMP's manual adapter unchanged, ship the complete installer and changelog in package artifacts, and add package discovery/support metadata without enabling npm publication.
+- Add a real packed-distribution smoke covering file completeness, native install/reinstall/remove, legacy migration, unrelated-profile preservation, and offline Pi UI loading without credentials or network use.
 - Remove Pi's automatic voice footer while preserving the audio-reactive cursor, errors, and explicit `/voice` status commands.
 - Remove OMP's automatic voice footer while preserving native cursor feedback, errors, explicit `/voice` commands, and session-switch behavior.
 - Match OMP-style held-key suppression using repeat cadence rather than treating Kitty negotiation as a guarantee of repeat/release labels.

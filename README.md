@@ -76,7 +76,7 @@ To register this checkout with Pi without cloning it:
 npm run install:local -- --host pi --pi-source local
 ```
 
-This is still native package management, not a wrapper. Pi loads the resolved checkout path without copying it. Keep the checkout in place and update it directly; native package updates do not pull a local source. Use `pi remove /absolute/path/to/checkout` before switching from a local registration to the Git source, so both sources are not loaded.
+This is still native package management, not a wrapper. Pi loads the resolved checkout path without copying it. Keep the checkout in place and update it directly; native package updates do not pull a local source. Keep only one source registered: remove the Git source before switching to local development, or use `pi remove /absolute/path/to/checkout` before switching back to Git.
 
 ## Credentials
 
@@ -216,9 +216,12 @@ All defaults (only override what you need):
 
 ```sh
 npm run check
+npm run check:package
 ```
 
 The regression suite covers realtime interim/final transitions, owned preview replacement, cursor and suffix preservation, cancellation, WebSocket finalization, audio bounds, held-key cadence, provider errors, and private credential import.
+
+The package smoke creates a real tarball, checks its shipped runtime/installer/documentation files, and installs it through Pi in isolated profiles. It verifies fresh/repeated installation, resource-filter preservation, native removal, legacy-wrapper migration, and an actual offline `/voice doctor` session. It uses no real model or speech credentials and never records microphone audio. Run it from a development checkout with the Pi dev dependency, `npm`, `tar`, and POSIX `python3` available; all scratch state is removed afterward.
 
 ### Live Pi and OMP smoke
 
@@ -282,6 +285,7 @@ src/config.ts        Strict shared configuration and provider persistence
 scripts/install.ts   Native Pi installation, OMP entrypoint and private key setup
 scripts/install-host.ts Interactive host detection and selection
 scripts/install-pi.ts Verified legacy-wrapper migration through Pi's native CLI
+scripts/smoke-package.ts Packed-artifact native install/remove/load verification
 scripts/smoke-live.py Real Pi/OMP, PulseAudio, and live-provider verification
 scripts/smoke-observer.ts Runtime/terminal evidence collector
 ```
