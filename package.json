@@ -5,6 +5,13 @@
   "description": "Hold-Space realtime cloud dictation for Pi and OMP with Deepgram and Groq",
   "type": "module",
   "license": "MIT",
+  "keywords": ["pi-package", "dictation", "speech-to-text", "deepgram", "groq"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/peekuh/pi-voice.git"
+  },
+  "homepage": "https://github.com/peekuh/pi-voice#readme",
+  "bugs": { "url": "https://github.com/peekuh/pi-voice/issues" },
   "engines": {
     "node": ">=22.19.0"
   },
@@ -22,7 +29,11 @@
     "index.ts",
     "omp.ts",
     "src",
+    "scripts/install.ts",
+    "scripts/install-host.ts",
+    "scripts/install-pi.ts",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

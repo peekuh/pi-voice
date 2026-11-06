@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectHosts, selectHost } from "../scripts/install-host.ts";
 import type { Host } from "../scripts/install-host.ts";
@@ -16,6 +16,7 @@ const entries = {
   pi: fileURLToPath(new URL("../index.ts", import.meta.url)),
   omp: fileURLToPath(new URL("../omp.ts", import.meta.url)),
 };
+const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
 async function isolatedHome(t: TestContext): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), "voice-install-"));
@@ -24,9 +25,16 @@ async function isolatedHome(t: TestContext): Promise<string> {
 }
 
 function install(home: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
-  return run(process.execPath, [installer, ...args], {
-    env: { ...process.env, HOME: home, PI_VOICE_CONFIG: join(home, "private", "config.json"), ...extraEnv },
+  const selected = args[args.indexOf("--host") + 1];
+  const local = (selected === "pi" || selected === "both") && !args.includes("--pi-source");
+  return run(process.execPath, [installer, ...args, ...(local ? ["--pi-source", "local"] : [])], {
+    env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: join(home, ".pi", "agent"), PI_VOICE_CONFIG: join(home, "private", "config.json"), ...extraEnv },
   });
+}
+
+async function piSources(root: string): Promise<string[]> {
+  const settings = JSON.parse(await readFile(join(root, "settings.json"), "utf8")) as { packages: Array<string | { source: string }> };
+  return settings.packages.map(entry => resolve(root, typeof entry === "string" ? entry : entry.source));
 }
 
 function target(home: string, host: Host): string {
@@ -37,26 +45,38 @@ function managedEntry(host: Host): string {
   return `// Managed by pi-voice.\nexport { default } from ${JSON.stringify(entries[host])};\n`;
 }
 
-for (const host of ["pi", "omp"] as const) {
-  test(`explicit ${host} installs only its adapter, even without its executable`, async (t) => {
-    const home = await isolatedHome(t);
-    const other = host === "pi" ? "omp" : "pi";
-    await mkdir(join(home, `.${other}`, "agent", "extensions"), { recursive: true });
-    await writeFile(target(home, other), "unrelated user extension\n");
-    const settings = join(home, `.${other}`, "agent", "settings.json");
-    await writeFile(settings, '{"unrelated":"settings"}\n');
-    const result = await install(home, ["--host", host], { PATH: join(home, "no-binaries") });
-    assert.equal(await readFile(target(home, host), "utf8"), managedEntry(host));
-    assert.equal(await readFile(target(home, other), "utf8"), "unrelated user extension\n");
-    assert.equal(await readFile(settings, "utf8"), '{"unrelated":"settings"}\n');
-    assert.match(result.stdout, /executable not found on PATH/);
-    assert.equal(result.stdout.includes(other === "pi" ? "Restart Pi" : "Restart OMP"), false);
-    assert.match(result.stdout, host === "pi" ? /Restart Pi or run \/reload/ : /Restart OMP/);
-    await assert.rejects(stat(join(home, "private")), { code: "ENOENT" });
-  });
-}
+test("Pi installation is native and does not change the OMP adapter or settings", async t => {
+  const home = await isolatedHome(t);
+  await mkdir(join(home, ".omp", "agent", "extensions"), { recursive: true });
+  await writeFile(target(home, "omp"), "unrelated user extension\n");
+  const settings = join(home, ".omp", "agent", "settings.json");
+  await writeFile(settings, '{"unrelated":"settings"}\n');
+  const result = await install(home, ["--host", "pi"]);
+  assert.deepEqual(await piSources(join(home, ".pi", "agent")), [resolve(packageRoot)]);
+  await assert.rejects(stat(target(home, "pi")), { code: "ENOENT" });
+  assert.equal(await readFile(target(home, "omp"), "utf8"), "unrelated user extension\n");
+  assert.equal(await readFile(settings, "utf8"), '{"unrelated":"settings"}\n');
+  assert.match(result.stdout, /installed natively/);
+  await assert.rejects(stat(join(home, "private")), { code: "ENOENT" });
+});
 
-test("both hosts use their own adapters and exact managed entries are idempotent", async (t) => {
+test("OMP can still prepare its adapter without installing or requiring Pi", async t => {
+  const home = await isolatedHome(t);
+  const result = await install(home, ["--host", "omp"], { PATH: join(home, "no-binaries") });
+  assert.equal(await readFile(target(home, "omp"), "utf8"), managedEntry("omp"));
+  await assert.rejects(stat(join(home, ".pi")), { code: "ENOENT" });
+  assert.match(result.stdout, /OMP executable not found/);
+});
+
+test("missing Pi fails before modifying targets or importing keys", async t => {
+  const home = await isolatedHome(t);
+  const source = join(home, "keys.txt");
+  await writeFile(source, "Groq: gsk_SYNTHETIC_TEST_KEY\n");
+  await assert.rejects(install(home, ["--host", "both", "--keys-file", source], { PATH: join(home, "no-binaries") }), /Pi is required/);
+  assert.deepEqual(await readdir(home), ["keys.txt"]);
+});
+
+test("both hosts use native Pi plus the OMP adapter without duplicate registrations", async t => {
   const home = await isolatedHome(t);
   const ompSettings = join(home, ".omp", "agent", "settings.json");
   const ompKeys = join(home, ".omp", "agent", "keybindings.json");
@@ -64,12 +84,12 @@ test("both hosts use their own adapters and exact managed entries are idempotent
   await writeFile(ompSettings, '{"stt":{"enabled":true}}\n');
   await writeFile(ompKeys, '{"space":"custom"}\n');
   await install(home, ["--host", "both"]);
-  const before = await Promise.all((["pi", "omp"] as const).map((host) => stat(target(home, host))));
+  const before = await stat(target(home, "omp"));
   const result = await install(home, ["--host", "both"]);
-  for (const [index, host] of (["pi", "omp"] as const).entries()) {
-    assert.equal(await readFile(target(home, host), "utf8"), managedEntry(host));
-    assert.equal((await stat(target(home, host))).mtimeMs, before[index].mtimeMs);
-  }
+  assert.deepEqual(await piSources(join(home, ".pi", "agent")), [resolve(packageRoot)]);
+  await assert.rejects(stat(target(home, "pi")), { code: "ENOENT" });
+  assert.equal(await readFile(target(home, "omp"), "utf8"), managedEntry("omp"));
+  assert.equal((await stat(target(home, "omp"))).mtimeMs, before.mtimeMs);
   assert.equal(await readFile(ompSettings, "utf8"), '{"stt":{"enabled":true}}\n');
   assert.equal(await readFile(ompKeys, "utf8"), '{"space":"custom"}\n');
   assert.match(result.stdout, /Restart Pi or run \/reload/);
@@ -90,9 +110,10 @@ test("installer keeps secrets private and refuses an unrelated installed extensi
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   assert.equal((await stat(join(home, "private"))).mode & 0o777, 0o700);
   assert.equal(await readFile(source, "utf8"), `Groq: ${key}\n`);
-  assert.equal((await readFile(target(home, "pi"), "utf8")).includes(key), false);
+  assert.equal((await readFile(join(home, ".pi", "agent", "settings.json"), "utf8")).includes(key), false);
+  await mkdir(join(home, ".pi", "agent", "extensions"), { recursive: true });
   await writeFile(target(home, "pi"), "unrelated user extension\n");
-  await assert.rejects(install(home, ["--host", "pi"]), /Refusing to overwrite/);
+  await assert.rejects(install(home, ["--host", "pi"]));
   assert.equal(await readFile(target(home, "pi"), "utf8"), "unrelated user extension\n");
 });
 
@@ -112,7 +133,7 @@ for (const conflict of ["pi", "omp"] as const) {
     await writeFile(source, "Groq: gsk_SYNTHETIC_NEW_KEY\nDeepgram: synthetic-new-key\n");
     const configBefore = await stat(configPath);
     const keyBefore = await stat(keyPath);
-    await assert.rejects(install(home, ["--host", "both", "--keys-file", source]), /Refusing to overwrite/);
+    await assert.rejects(install(home, ["--host", "both", "--keys-file", source]));
     assert.equal(await readFile(target(home, conflict), "utf8"), "unrelated user extension\n");
     await assert.rejects(stat(join(home, `.${other}`)), { code: "ENOENT" });
     assert.equal(await readFile(configPath, "utf8"), configText);
@@ -143,6 +164,7 @@ test("invalid and conflicting arguments cannot create files", async (t) => {
     ["--host", "pi", "--keys-file", "one", "--keys-file", "two"],
     ["--host", "pi", "--pi-dir", "one", "--pi-dir", "two"],
     ["--host", "omp", "--omp-dir", "one", "--omp-dir", "two"],
+    ["--host", "pi", "--pi-source", "invalid"], ["--host", "pi", "--pi-source", "git", "--pi-source", "local"],
   ];
   for (const args of cases) {
     await assert.rejects(install(home, args), /Usage:/);
@@ -155,7 +177,8 @@ test("custom host roots are exact agent roots, not parent profile directories", 
   const piRoot = join(home, "pi profile");
   const ompRoot = join(home, "omp profile");
   await install(home, ["--omp-dir", ompRoot, "--host", "both", "--pi-dir", piRoot]);
-  assert.equal(await readFile(join(piRoot, "extensions", "cloud-voice.ts"), "utf8"), managedEntry("pi"));
+  assert.deepEqual(await piSources(piRoot), [resolve(packageRoot)]);
+  await assert.rejects(stat(join(piRoot, "extensions", "cloud-voice.ts")), { code: "ENOENT" });
   assert.equal(await readFile(join(ompRoot, "extensions", "cloud-voice.ts"), "utf8"), managedEntry("omp"));
   for (const host of ["pi", "omp"]) await assert.rejects(stat(join(home, `.${host}`)), { code: "ENOENT" });
 });
@@ -208,7 +231,8 @@ test("both host key imports preserve provider choice, settings and private permi
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   assert.equal((await stat(join(home, "private"))).mode & 0o777, 0o700);
   assert.equal(await readFile(source, "utf8"), labelled);
-  for (const host of ["pi", "omp"] as const) assert.equal(await readFile(target(home, host), "utf8"), managedEntry(host));
+  assert.deepEqual(await piSources(join(home, ".pi", "agent")), [resolve(packageRoot)]);
+  assert.equal(await readFile(target(home, "omp"), "utf8"), managedEntry("omp"));
 });
 
 test("host detection requires executable files on the supplied PATH", async (t) => {

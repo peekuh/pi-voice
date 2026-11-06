@@ -15,38 +15,84 @@ Separate native host adapters share the recording, transcription, held-key detec
 
 Verified on Linux with Pi 1.2.0 and OMP 18.8.4. Linux recording uses the default PulseAudio/PipeWire source. The recorder also has macOS AVFoundation and Windows DirectShow argument handling, but those platforms have not been live-tested. Windows requires an explicit `capture.device`.
 
-## Install this checkout
+## Install in Pi
+
+For a fresh installation, use Pi's native package manager:
+
+```sh
+pi install git:github.com/peekuh/pi-voice
+```
+
+Restart Pi or run `/reload`. Pi owns the package checkout and registration; no extra extension wrapper is needed. Installing does not change your voice provider, credentials, or OMP configuration.
+
+This project is distributed from Git. **Do not install `npm:pi-voice`: that npm name belongs to an unrelated package.** npm publication remains disabled.
+
+### Migrate an earlier checkout-based Pi install
+
+If you already have our managed `~/.pi/agent/extensions/cloud-voice.ts`, use the updated checkout's installer instead of keeping the wrapper alongside a native installation:
+
+```sh
+npm run install:local -- --host pi
+```
+
+It delegates to `pi install git:github.com/peekuh/pi-voice`, then removes only the recognized legacy wrapper after native installation succeeds. It verifies the wrapper's marker, re-export, and referenced package identity. Unrelated, modified, symlinked, or unverified wrappers are refused rather than deleted. If Pi installation fails, the old wrapper is left intact. The user-global operation does not grant trust to unrelated project resources in the installer's working directory.
+
+The Pi CLI must be on PATH. Custom profiles use `--pi-dir /exact/agent/root`; otherwise the installer respects `PI_CODING_AGENT_DIR` and then Pi's default agent root.
+
+### Updates and removal
+
+```sh
+pi list
+pi update git:github.com/peekuh/pi-voice
+pi remove git:github.com/peekuh/pi-voice
+```
+
+Removal unregisters/removes the Pi package, not your shared `~/.config/pi-voice` keys/config or OMP installation. Restart Pi or `/reload` after package changes.
+
+## OMP and combined checkout setup
+
+The convenience installer still asks **Pi**, **OMP**, or **Both** in an interactive terminal:
 
 ```sh
 npm run install:local
 ```
 
-The interactive installer detects available CLIs and asks **Pi**, **OMP**, or **Both**. Scripts/noninteractive shells must select explicitly:
+Scripts must select explicitly:
 
 ```sh
-npm run install:local -- --host pi
 npm run install:local -- --host omp
 npm run install:local -- --host both
 ```
 
-It writes only the selected entrypoints:
+Pi uses its native Git package registration. OMP keeps its existing manual `~/.omp/agent/extensions/cloud-voice.ts` entrypoint importing this checkout's `omp.ts`; keep that checkout in place and restart OMP after changes. Do not base the OMP wrapper on a disposable Pi-managed cache directory if you plan to remove the Pi package.
 
-- `~/.pi/agent/extensions/cloud-voice.ts` imports `index.ts`.
-- `~/.omp/agent/extensions/cloud-voice.ts` imports `omp.ts`.
+All selected targets are preflighted before installation, and unrelated extensions are never overwritten. `--omp-dir /exact/agent/root` selects a custom OMP profile. No global OMP settings or keybindings are changed; its native Space handler is disabled only on the extension-owned main TUI editor, including while `/voice off` types ordinary spaces.
 
-Keep this checkout in place: imports are absolute. Restart Pi or run `/reload`; restart OMP. Both destinations are checked before writing anything, and unrelated existing extensions are never overwritten. For custom agent roots or OMP profiles, use `--pi-dir /path/to/pi-agent` and `--omp-dir /path/to/omp-profile/agent`.
+### Local Pi development
 
-OMP's native Space handler is disabled only on the extension-owned editor, even when `/voice off` is selected; ordinary spaces then type normally. No global OMP settings or keybinding files are modified. Main TUI sessions only: the adapter does not register interactive state in OMP subagents or headless/RPC sessions.
+To register this checkout with Pi without cloning it:
 
-To import a labelled file containing both keys without putting them in shell history:
+```sh
+npm run install:local -- --host pi --pi-source local
+```
+
+This is still native package management, not a wrapper. Pi loads the resolved checkout path without copying it. Keep the checkout in place and update it directly; native package updates do not pull a local source. Use `pi remove /absolute/path/to/checkout` before switching from a local registration to the Git source, so both sources are not loaded.
+
+## Credentials
+
+Both hosts share `~/.config/pi-voice/config.json` and private credential files. Native installation needs no keys; configure `DEEPGRAM_API_KEY`/`GROQ_API_KEY` or `apiKeyFile` as described below before dictating.
+
+To import a labelled key file from a checkout or unpacked package:
 
 ```sh
 npm run install:local -- --host both --keys-file /absolute/path/to/api-keys.txt
 ```
 
-Use `Groq: ...` and `Deepgram: ...` on separate lines (`GROQ_API_KEY=...` and `DEEPGRAM_API_KEY=...` also work). The installer stores raw copies in `~/.config/pi-voice/groq.key` and `deepgram.key`, with mode `0600`, and references them from the config. The source file is left untouched. For a file containing only a raw Groq key, use `--groq-key-file` instead. An unrelated existing `cloud-voice.ts` is never overwritten.
+Use `Groq: ...` and `Deepgram: ...` on separate lines (`GROQ_API_KEY=...` and `DEEPGRAM_API_KEY=...` also work). The optional import stores raw copies in `~/.config/pi-voice/groq.key` and `deepgram.key` with mode `0600`; the source file is left untouched and existing provider/model preferences are preserved. For a single raw Groq key, use `--groq-key-file`. Input and destinations are checked before invoking Pi; private files are written only after successful native installation.
 
-Installing the local entrypoints requires no runtime npm dependencies: each CLI supplies its own editor and keyboard APIs. Both hosts share `~/.config/pi-voice/config.json` and private credential files. Development checks use both hosts' type packages:
+## Development
+
+The host supplies its editor and keyboard APIs. To run repository development checks:
 
 ```sh
 npm ci --ignore-scripts
@@ -197,7 +243,7 @@ The cursor checks capture actual editor-render output and native-cursor visibili
 
 The Pi fullscreen smoke requires **zero composer-row erases and zero cursor-only animation paints during settled silence**, then verifies reactive speech updates and resize recovery. OMP uses its own component renderer; its smoke checks the resulting cursor, display width, resize behavior, and restored native cursor rather than assuming Pi's output-frame format.
 
-Verified on Linux with Pi 1.2.0 and OMP 18.8.4: 246 regression tests plus TypeScript checking, live realtime transcription and cancellation in both hosts, and controlled-volume cursor captures. These are real CLI sessions with injected terminal events, not physical desktop keyboard/window-manager tests; interception outside the CLI remains environment-dependent. The smoke restores its temporary audio resources and does not change default input/output devices.
+Verified on Linux with Pi 1.2.0 and OMP 18.8.4: 274 regression tests plus TypeScript checking, native Pi installation/migration checks, live realtime transcription and cancellation in both hosts, and controlled-volume cursor captures. CLI smoke checks use injected terminal events, not physical desktop keyboard/window-manager input; interception outside the CLI remains environment-dependent.
 
 ### Controlled-volume reference check
 
@@ -233,8 +279,9 @@ src/transcript.ts    Owned interim span replacement and final commits
 src/segmenter.ts     Energy-based speech boundaries, without a recognition model
 src/credentials.ts   Labelled credential-file parsing
 src/config.ts        Strict shared configuration and provider persistence
-scripts/install.ts   Host-specific entrypoints and private provider-key import
+scripts/install.ts   Native Pi installation, OMP entrypoint and private key setup
 scripts/install-host.ts Interactive host detection and selection
+scripts/install-pi.ts Verified legacy-wrapper migration through Pi's native CLI
 scripts/smoke-live.py Real Pi/OMP, PulseAudio, and live-provider verification
 scripts/smoke-observer.ts Runtime/terminal evidence collector
 ```
